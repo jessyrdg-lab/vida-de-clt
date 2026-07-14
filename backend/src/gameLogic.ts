@@ -607,7 +607,7 @@ export function applyAction(
 
     // ── ACCEPT_JOB ────────────────────────────────────────
     case 'ACCEPT_JOB': {
-      const { offerId } = action;
+      const { offerId, perfectInterview } = action;
       const email = stats.emails.find(e => e.jobOffer?.id === offerId);
       if (!email || !email.jobOffer) return fail('Proposta não encontrada.');
       const offer = email.jobOffer;
@@ -615,6 +615,10 @@ export function applyAction(
       stats.contas  = offer.contas;
       stats.nivel   = Math.min(6, stats.nivel + 1);
       stats.emails  = stats.emails.filter(e => e.jobOffer?.id !== offerId);
+      if (perfectInterview && !stats.unlockedTitles.includes('BomPapo')) {
+        stats.unlockedTitles.push('BomPapo');
+        addEvent(events, '🏆 Título desbloqueado: Bom de papo! Entrevista concluída sem erros!', 'career');
+      }
       addEvent(events, `🤝 Você aceitou a vaga de ${offer.cargo} na ${offer.empresa}! Novo salário: R$ ${Math.floor(offer.salario)}.`, 'career');
       checkTitles(stats, events);
       return ok(stats, events);

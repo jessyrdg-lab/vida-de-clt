@@ -1127,7 +1127,11 @@ const App: React.FC = () => {
     if (!interviewOffer) return;
 
     if (interviewStatus === 'success') {
-      await runServerAction({ type: 'ACCEPT_JOB', offerId: interviewOffer.id });
+      await runServerAction({
+        type: 'ACCEPT_JOB',
+        offerId: interviewOffer.id,
+        perfectInterview: interviewWrongCount === 0,
+      });
     } else if (interviewStatus === 'failed') {
       const email = stats.emails.find(item => item.jobOffer?.id === interviewOffer.id);
       if (email) await runServerAction({ type: 'DELETE_EMAIL', emailId: email.id });

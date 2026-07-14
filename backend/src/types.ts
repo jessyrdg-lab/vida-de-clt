@@ -139,7 +139,7 @@ export type GameAction =
   | { type: 'HEALTH_ACTION'; actionId: string }
   | { type: 'PAY_DISEASE' }
   | { type: 'LEISURE'; activityId: string }
-  | { type: 'ACCEPT_JOB'; offerId: string }
+  | { type: 'ACCEPT_JOB'; offerId: string; perfectInterview?: boolean }
   | { type: 'INVEST_DEPOSIT'; amount: number }
   | { type: 'INVEST_WITHDRAW'; amount: number }
   | { type: 'BUY_ASSET'; symbol: string; qty: number; assetType: 'stock' | 'crypto' }

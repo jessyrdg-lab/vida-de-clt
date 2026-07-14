@@ -34,19 +34,19 @@ app.use(cors({
 app.use(express.json({ limit: '64kb' })); // Limita tamanho do body
 
 // ── Rate limiting ─────────────────────────────────────────────
-// Global: máx 200 requisições por IP a cada 15 minutos
+// Global: folga suficiente para uma sessão ativa, mantendo proteção contra abuso.
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 200,
+  max: 3000,
   standardHeaders: true,
   legacyHeaders: false,
   message: { ok: false, error: 'Muitas requisições. Aguarde alguns minutos.' },
 });
 
-// Por ação: máx 30 ações por minuto por IP (evita automação/scripts)
+// Por ação: impede automação agressiva sem bloquear cliques legítimos.
 const actionLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 30,
+  max: 180,
   standardHeaders: true,
   legacyHeaders: false,
   message: { ok: false, error: 'Muitas ações por minuto. Calma aí!' },
