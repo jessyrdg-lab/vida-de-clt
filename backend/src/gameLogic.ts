@@ -646,6 +646,7 @@ export function applyAction(
       stats.poupanca -= amount;
       stats.saldo    += amount;
       addEvent(events, `🏦 Retirou R$ ${amount} da poupança.`, 'neutral');
+      checkTitles(stats, events);
       return ok(stats, events);
     }
 
