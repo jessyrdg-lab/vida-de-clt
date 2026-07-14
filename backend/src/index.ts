@@ -9,14 +9,18 @@ const app  = express();
 const PORT = process.env.PORT || 3001;
 
 // ── CORS ─────────────────────────────────────────────────────
-const allowedOrigins = (process.env.ALLOWED_ORIGIN ?? 'http://localhost:3000')
-  .split(',')
-  .map(origin => origin.trim().replace(/\/$/, ''))
-  .filter(Boolean);
+const allowedOrigins = new Set([
+  ...(process.env.ALLOWED_ORIGIN ?? 'http://localhost:3000').split(','),
+  'https://vidadeclt.com.br',
+  'https://www.vidadeclt.com.br',
+  'http://vidadeclt.com.br',
+  'http://www.vidadeclt.com.br',
+  'https://jessyrdg-lab.github.io',
+].map(origin => origin.trim().replace(/\/$/, '')).filter(Boolean));
 
 app.use(cors({
   origin(origin, callback) {
-    if (!origin || allowedOrigins.includes(origin.replace(/\/$/, ''))) {
+    if (!origin || allowedOrigins.has(origin.replace(/\/$/, ''))) {
       callback(null, true);
       return;
     }

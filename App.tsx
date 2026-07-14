@@ -1234,11 +1234,6 @@ const App: React.FC = () => {
         <div className="text-center px-6 max-w-md">
           <div className={`text-5xl mb-4 ${bootstrapError ? '' : 'animate-bounce'}`}>{bootstrapError ? '⚠️' : '🏢'}</div>
           <p className="text-sm font-bold uppercase tracking-[0.2em] text-slate-200">{bootstrapMessage}</p>
-          {!bootstrapError && (
-            <p className="mt-3 text-xs leading-relaxed text-slate-400">
-              Na primeira visita, a hospedagem gratuita pode levar até um minuto para iniciar.
-            </p>
-          )}
           {bootstrapError && (
             <button
               onClick={() => setBootstrapRetryKey(current => current + 1)}
