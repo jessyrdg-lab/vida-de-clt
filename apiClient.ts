@@ -71,31 +71,35 @@ export function hasToken(): boolean {
 const wait = (milliseconds: number) => new Promise(resolve => setTimeout(resolve, milliseconds));
 
 /**
- * Aguarda o servidor gratuito acordar antes de tentar abrir o save.
- * Retorna false somente depois de aproximadamente dois minutos sem resposta.
+ * Aguarda o servidor e o banco ficarem prontos antes de abrir o save.
  */
 export async function waitForServer(onAttempt?: (attempt: number) => void): Promise<boolean> {
-  const maxAttempts = 18;
+  const maxAttempts = 10;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     onAttempt?.(attempt);
     const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 10_000);
+    // A primeira conexão é mantida tempo suficiente para o Render acordar.
+    const requestTimeout = attempt === 1 ? 75_000 : 10_000;
+    const timeout = window.setTimeout(() => controller.abort(), requestTimeout);
 
     try {
-      const response = await fetch(`${SERVER_BASE}/health`, {
+      const response = await fetch(`${SERVER_BASE}/ready`, {
         method: 'GET',
         signal: controller.signal,
         cache: 'no-store',
       });
-      if (response.ok) return true;
+      if (response.ok) {
+        const data = await response.json().catch(() => null);
+        if (data?.ok === true) return true;
+      }
     } catch {
       // O Render pode recusar algumas tentativas enquanto o servidor inicia.
     } finally {
       window.clearTimeout(timeout);
     }
 
-    if (attempt < maxAttempts) await wait(4_000);
+    if (attempt < maxAttempts) await wait(3_000);
   }
 
   return false;

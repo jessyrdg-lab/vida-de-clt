@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import type Database from 'better-sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GameStats, GameEvent } from './types.js';
@@ -41,22 +41,23 @@ const databaseReady = (async () => {
       CREATE TABLE IF NOT EXISTS sessions (
         token TEXT PRIMARY KEY,
         created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::BIGINT)
-      )
-    `);
-    await postgres.query(`
+      );
+
       CREATE TABLE IF NOT EXISTS game_states (
         token TEXT PRIMARY KEY REFERENCES sessions(token) ON DELETE CASCADE,
         stats JSONB NOT NULL,
         events JSONB NOT NULL DEFAULT '[]'::jsonb,
         updated_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::BIGINT)
-      )
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_game_states_token ON game_states(token);
     `);
-    await postgres.query('CREATE INDEX IF NOT EXISTS idx_game_states_token ON game_states(token)');
     return;
   }
 
+  const { default: SqliteDatabase } = await import('better-sqlite3');
   const databasePath = path.join(__dirname, '../../game.db');
-  sqlite = new Database(databasePath);
+  sqlite = new SqliteDatabase(databasePath);
   sqlite.pragma('journal_mode = WAL');
   sqlite.pragma('foreign_keys = ON');
   sqlite.exec(`

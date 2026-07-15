@@ -7,6 +7,7 @@ import { initializeDatabase } from './db.js';
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
+let databaseStatus: 'starting' | 'ready' | 'error' = 'starting';
 
 // ── CORS ─────────────────────────────────────────────────────
 const allowedOrigins = new Set([
@@ -60,7 +61,15 @@ app.use('/api/game', gameRouter);
 
 // ── Health check ──────────────────────────────────────────────
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, uptime: Math.floor(process.uptime()) });
+  res.json({ ok: true, uptime: Math.floor(process.uptime()), database: databaseStatus });
+});
+
+// O frontend espera este endpoint antes de carregar o save.
+app.get('/ready', (_req, res) => {
+  if (databaseStatus === 'ready') {
+    return res.json({ ok: true });
+  }
+  return res.status(503).json({ ok: false, database: databaseStatus });
 });
 
 // ── 404 catch-all ─────────────────────────────────────────────
@@ -75,9 +84,17 @@ app.use((error: Error, _req: express.Request, res: express.Response, _next: expr
 });
 
 // ── Start ─────────────────────────────────────────────────────
-await initializeDatabase();
-
 app.listen(PORT, () => {
   console.log(`[Vida de CLT Backend] Rodando na porta ${PORT}`);
   console.log(`[Vida de CLT Backend] Banco: ${process.env.DATABASE_URL ? 'PostgreSQL' : 'SQLite local'}`);
 });
+
+void initializeDatabase()
+  .then(() => {
+    databaseStatus = 'ready';
+    console.log('[Vida de CLT Backend] Banco pronto.');
+  })
+  .catch(error => {
+    databaseStatus = 'error';
+    console.error('[Vida de CLT Backend] Falha ao iniciar o banco:', error);
+  });
