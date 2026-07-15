@@ -37,22 +37,32 @@ const databaseReady = (async () => {
       connectionTimeoutMillis: 15_000,
     }) as PostgresPool;
 
-    await postgres.query(`
-      CREATE TABLE IF NOT EXISTS sessions (
-        token TEXT PRIMARY KEY,
-        created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::BIGINT)
-      );
-
-      CREATE TABLE IF NOT EXISTS game_states (
-        token TEXT PRIMARY KEY REFERENCES sessions(token) ON DELETE CASCADE,
-        stats JSONB NOT NULL,
-        events JSONB NOT NULL DEFAULT '[]'::jsonb,
-        updated_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::BIGINT)
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_game_states_token ON game_states(token);
-    `);
-    return;
+    const maxAttempts = 8;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        await postgres.query(`
+          CREATE TABLE IF NOT EXISTS sessions (
+            token TEXT PRIMARY KEY,
+            created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::BIGINT)
+          )
+        `);
+        await postgres.query(`
+          CREATE TABLE IF NOT EXISTS game_states (
+            token TEXT PRIMARY KEY REFERENCES sessions(token) ON DELETE CASCADE,
+            stats JSONB NOT NULL,
+            events JSONB NOT NULL DEFAULT '[]'::jsonb,
+            updated_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::BIGINT)
+          )
+        `);
+        await postgres.query('CREATE INDEX IF NOT EXISTS idx_game_states_token ON game_states(token)');
+        return;
+      } catch (error) {
+        if (attempt === maxAttempts) throw error;
+        const retryDelay = Math.min(1_000 * (2 ** (attempt - 1)), 15_000);
+        console.warn(`[Vida de CLT Backend] Banco indisponível (tentativa ${attempt}/${maxAttempts}). Nova tentativa em ${retryDelay / 1000}s.`);
+        await new Promise(resolve => setTimeout(resolve, retryDelay));
+      }
+    }
   }
 
   const { default: SqliteDatabase } = await import('better-sqlite3');
