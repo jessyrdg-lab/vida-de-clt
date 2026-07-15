@@ -74,6 +74,8 @@ export interface House {
 export interface GameStats {
   playerNick: string;
   devModeUsed: boolean;
+  gameOver: boolean;
+  deathReason: string;
   saldo: number;
   salario: number;
   comida: number;
@@ -104,8 +106,6 @@ export interface GameStats {
   ownedHousesIds: string[];
   perHouseUpgrades: Record<string, { cozinha: number, armazem: number }>;
   roomUpgrades: RoomUpgrades;
-  maxComida: number;
-  maxLenha: number;
   // Sistema de Saúde
   saudeValue: number; // 0-100, 100 = saúde plena
   doencaAtiva: DoencaAtiva | null;

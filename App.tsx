@@ -11,6 +11,7 @@ import {
   loadLeaderboard,
   saveGame as saveServerGame,
   waitForServer,
+  hasToken,
   DispatchResult,
   GameAction,
   LeaderboardEntry,
@@ -242,6 +243,8 @@ const INITIAL_CRYPTOS: Stock[] = [
 const INITIAL_STATS: GameStats = {
   playerNick: '',
   devModeUsed: false,
+  gameOver: false,
+  deathReason: '',
   saldo: 500,
   salario: 1618,
   comida: 5,
@@ -279,8 +282,6 @@ const INITIAL_STATS: GameStats = {
   ownedHousesIds: [],
   perHouseUpgrades: {},
   roomUpgrades: { sala: 0, cozinha: 0, escritorio: 0, armazem: 0 },
-  maxComida: 15,
-  maxLenha: 15,
   saudeValue: 100,
   doencaAtiva: null,
   humor: 'Normal',
@@ -743,8 +744,6 @@ const App: React.FC = () => {
   const [insufficientFundsMsg, setInsufficientFundsMsg] = useState<string | null>(null);
   const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
   const [investTab, setInvestTab] = useState<'savings' | 'stocks' | 'crypto'>('savings');
-  const [eventFoodMultiplier, setEventFoodMultiplier] = useState(1.0);
-  
   const [isNickModalOpen, setIsNickModalOpen] = useState(true);
   const [nickInput, setNickInput] = useState("");
 
@@ -802,13 +801,20 @@ const App: React.FC = () => {
         return;
       }
 
+      const hadStoredGame = hasToken();
       const saved = await loadServerGame();
       if (!active) return;
       if (saved) {
         setStats(saved.stats);
         setEvents(saved.events);
+        setGameOver(saved.stats.gameOver);
+        setDeathReason(saved.stats.deathReason);
         setLastSavedAt(Date.now());
         setIsNickModalOpen(false);
+      } else if (hadStoredGame && hasToken()) {
+        setBootstrapError(true);
+        setBootstrapMessage('Não foi possível carregar seu jogo. Seu progresso continua salvo; tente novamente.');
+        return;
       }
       setIsBootstrapping(false);
     })();
@@ -824,6 +830,8 @@ const App: React.FC = () => {
 
     setStats(result.stats);
     setEvents(result.events);
+    setGameOver(result.stats.gameOver || result.flags?.gameOver === true);
+    setDeathReason(result.stats.deathReason || result.flags?.deathReason || '');
     setLastSavedAt(Date.now());
     setShowSaveIndicator(true);
     setTimeout(() => setShowSaveIndicator(false), 1800);
@@ -831,10 +839,6 @@ const App: React.FC = () => {
     if (result.flags?.mechUnlocked) setPendingUnlock(result.flags.mechUnlocked);
     if (result.flags?.novaDoenca && result.stats.doencaAtiva) setPendingDisease(result.stats.doencaAtiva);
     if (result.flags?.seasonNotice) setSeasonNotice(result.flags.seasonNotice);
-    if (result.flags?.gameOver) {
-      setDeathReason(result.flags.deathReason || 'Sua jornada terminou.');
-      setGameOver(true);
-    }
     return true;
   }, []);
 
@@ -873,7 +877,12 @@ const App: React.FC = () => {
   };
 
   const handleDeleteSave = async () => {
-    await deleteServerSave();
+    const result = await deleteServerSave();
+    if (!result.ok) {
+      setSaveSystemMsg({ text: result.error || 'Não foi possível apagar o save.', type: 'error' });
+      setTimeout(() => setSaveSystemMsg(null), 3500);
+      return;
+    }
     setShowDeleteSaveConfirm(false);
     setIsSaveModalOpen(false);
     resetLocalUi();
@@ -889,8 +898,8 @@ const App: React.FC = () => {
     if (currentInterestRate >= 24) price *= 2.0;
     else if (currentInterestRate >= 17) price *= 1.4;
     price *= (1 - stats.cursoBenefits.foodDiscount);
-    return price * eventFoodMultiplier;
-  }, [stats.mes, currentInterestRate, eventFoodMultiplier, stats.cursoBenefits.foodDiscount]);
+    return price;
+  }, [stats.mes, currentInterestRate, stats.cursoBenefits.foodDiscount]);
 
   const getSeason = (mes: number): Season => {
     const cycle = ((mes - 1) % 12) + 1;
@@ -946,7 +955,7 @@ const App: React.FC = () => {
         salaryBase = Math.floor(salaryBase * PRODUTIVIDADE_SALARY_MOD[previous.produtividade]);
       }
       const rendimento = next.poupanca - previous.poupanca;
-      const bonusEvento = next.saldo - previous.saldo - salaryBase - rendimento;
+      const bonusEvento = next.saldo - previous.saldo - salaryBase;
       const jurosAplicados = rate > 0 ? Math.floor(previous.contas * (rate / 100)) : 0;
       const contasAdicionadas = Math.max(0, next.contasEmAtraso - previous.contasEmAtraso - jurosAplicados);
       const newEvents = result.events.slice(previousEventsCount);
@@ -1069,7 +1078,12 @@ const App: React.FC = () => {
   };
 
   const handleReset = async () => {
-    await deleteServerSave();
+    const result = await deleteServerSave();
+    if (!result.ok) {
+      setSaveSystemMsg({ text: result.error || 'Não foi possível reiniciar agora.', type: 'error' });
+      setTimeout(() => setSaveSystemMsg(null), 3500);
+      return;
+    }
     resetLocalUi();
   };
 

@@ -18,6 +18,8 @@ backend/node_modules
 backend/dist
 game.db*
 .npm-cache
+.migration-tools/
+.migration-backups/
 
 # Editor directories and files
 .vscode/*

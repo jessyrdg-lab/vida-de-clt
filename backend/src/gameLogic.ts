@@ -93,8 +93,8 @@ function checkTitles(stats: GameStats, events: GameEvent[]): void {
     unlock('Sabido', 'Todos os cursos concluídos!');
   }
 
-  // WinterWarrior: sobreviveu ao inverno (mês 10+)
-  if (stats.mes >= 10) unlock('WinterWarrior', 'Sobreviveu ao inverno!');
+  // WinterWarrior: completou os três meses do primeiro inverno.
+  if (stats.mes >= 13) unlock('WinterWarrior', 'Sobreviveu ao inverno!');
 
   // GøD: tem todos os outros títulos
   const allExceptGod = TITLES_LIST.filter(t => t.id !== 'GOD').map(t => t.id);
@@ -212,7 +212,6 @@ interface MonthlyEvent {
   type: 'positive' | 'negative' | 'neutral';
   saldoMult?: number;    // multiplier on salario
   billsMult?: number;    // multiplier on monthly bills
-  foodMult?: number;     // multiplier on food price
 }
 
 function buildMonthlyEvents(stats: GameStats): { good: MonthlyEvent[]; bad: MonthlyEvent[]; neutral: MonthlyEvent[] } {
@@ -233,7 +232,6 @@ function buildMonthlyEvents(stats: GameStats): { good: MonthlyEvent[]; bad: Mont
     { nome: 'Farmácia Cara',              desc: 'Você teve que comprar remédios inesperados.',         type: 'negative', saldoMult: -0.05 },
     { nome: 'Conta Extra',               desc: 'Uma conta que você não esperava chegou.',             type: 'negative', billsMult: 1.20  },
     { nome: 'Mês Mais Caro',             desc: 'As despesas mensais subiram inesperadamente.',        type: 'negative', billsMult: 1.10  },
-    { nome: 'Comida Mais Cara',          desc: 'Alta no supermercado esse mês.',                      type: 'negative', foodMult: 1.15  },
     { nome: 'Roubaram seu Celular',      desc: 'Você perdeu o celular e teve que comprar outro.',     type: 'negative', saldoMult: -0.15 },
     { nome: 'Doente Demais pra Trabalhar', desc: 'Você ficou de atestado e perdeu dias de trabalho.',type: 'negative', saldoMult: -0.05 },
   ];
@@ -256,6 +254,9 @@ export function applyPassMonth(stats: GameStats, events: GameEvent[]): {
   deathReason: string;
 } {
   const flags: ActionResult['flags'] = {};
+  if (stats.gameOver) {
+    return { flags, gameOver: true, deathReason: stats.deathReason || 'Sua jornada terminou.' };
+  }
   const season = getSeason(stats.mes);
   const interestRate = getInterestRate(stats);
   const isDoente = !!stats.doencaAtiva;
@@ -270,7 +271,6 @@ export function applyPassMonth(stats: GameStats, events: GameEvent[]): {
   else if (roll < goodProb + badProb)   selectedEvent = pick(bad);
   else                                  selectedEvent = pick(neutral);
 
-  let eventFoodMult = selectedEvent.foodMult ?? 1.0;
   let eventBillsMult = selectedEvent.billsMult ?? 1.0;
   let bonusSaldo = 0;
   if (selectedEvent.saldoMult) {
@@ -296,7 +296,7 @@ export function applyPassMonth(stats: GameStats, events: GameEvent[]): {
 
   // ── Unlock mechanics ─────────────────────────────────────
   stats.mes += 1;
-  stats.saldo += actualSalary + bonusSaldo + rendimento;
+  stats.saldo += actualSalary + bonusSaldo;
   stats.contasEmAtraso += monthlyBillsAdded;
   if (stats.contasEmAtraso > 0) stats.mesesEmAtraso += 1;
   else stats.mesesEmAtraso = 0;
@@ -332,7 +332,9 @@ export function applyPassMonth(stats: GameStats, events: GameEvent[]): {
   stats.comida = Math.max(0, stats.comida - 1);
   if (season === 'Inverno') {
     if (stats.lenha <= 0) {
-      return { flags, gameOver: true, deathReason: 'FRIO: Falta de lenha no inverno rigoroso. Sua casa congelou.' };
+      stats.gameOver = true;
+      stats.deathReason = 'FRIO: Falta de lenha no inverno rigoroso. Sua casa congelou.';
+      return { flags, gameOver: true, deathReason: stats.deathReason };
     }
     stats.lenha -= 1;
   }
@@ -348,7 +350,9 @@ export function applyPassMonth(stats: GameStats, events: GameEvent[]): {
     stats.saudeValue = clamp(stats.saudeValue + delta, 0, 100);
 
     if (stats.saudeValue <= 0) {
-      return { flags, gameOver: true, deathReason: 'COLAPSO DE SAÚDE: Seu corpo não resistiu.' };
+      stats.gameOver = true;
+      stats.deathReason = 'COLAPSO DE SAÚDE: Seu corpo não resistiu.';
+      return { flags, gameOver: true, deathReason: stats.deathReason };
     }
     if (!stats.doencaAtiva) {
       const chance = getDiseaseChance(stats.saudeValue);
@@ -429,11 +433,15 @@ export function applyPassMonth(stats: GameStats, events: GameEvent[]): {
 
   // ── Game-over check (food, interest) ─────────────────────
   if (stats.comida <= 0) {
-    return { flags, gameOver: true, deathReason: 'FOME: Seu estoque de comida acabou.' };
+    stats.gameOver = true;
+    stats.deathReason = 'FOME: Seu estoque de comida acabou.';
+    return { flags, gameOver: true, deathReason: stats.deathReason };
   }
   const finalInterestRate = getInterestRate(stats);
   if (finalInterestRate >= 80) {
-    return { flags, gameOver: true, deathReason: 'COLAPSO FINANCEIRO: Seus juros atingiram 80%.' };
+    stats.gameOver = true;
+    stats.deathReason = 'COLAPSO FINANCEIRO: Seus juros atingiram 80%.';
+    return { flags, gameOver: true, deathReason: stats.deathReason };
   }
 
   // ── Titles ───────────────────────────────────────────────
@@ -483,7 +491,7 @@ export function applyAction(
     // ── PAY_BILLS ────────────────────────────────────────
     case 'PAY_BILLS': {
       const amount = Math.floor(action.amount);
-      if (!Number.isFinite(amount) || amount <= 0 || amount > stats.contasEmAtraso + 1) return fail('Valor inválido.');
+      if (!Number.isFinite(amount) || amount <= 0 || amount > stats.contasEmAtraso) return fail('Valor inválido.');
       if (stats.saldo < amount) return fail('Saldo insuficiente para pagar esse valor.');
       stats.saldo -= amount;
       stats.contasEmAtraso = Math.max(0, stats.contasEmAtraso - amount);
@@ -548,6 +556,7 @@ export function applyAction(
       const { courseId } = action;
       const curso = CURSOS.find(c => c.id === courseId);
       if (!curso) return fail('Curso não encontrado.');
+      if (stats.mes < curso.unlockMes) return fail(`Curso disponível a partir do mês ${curso.unlockMes}.`);
       if (stats.cursosCompletos.includes(courseId)) return fail('Curso já concluído.');
       if (stats.cursoAtivo && stats.cursoAtivo.id === courseId) return fail('Este curso já está ativo.');
       if (stats.cursoAtivo) return fail('Confirme a troca antes de selecionar outro curso. Use CONFIRM_SWAP_COURSE.');
@@ -561,6 +570,7 @@ export function applyAction(
       const { courseId } = action;
       const curso = CURSOS.find(c => c.id === courseId);
       if (!curso) return fail('Curso não encontrado.');
+      if (stats.mes < curso.unlockMes) return fail(`Curso disponível a partir do mês ${curso.unlockMes}.`);
       if (stats.cursosCompletos.includes(courseId)) return fail('Curso já concluído.');
       stats.cursoAtivo = { id: courseId, progress: 0 };
       addEvent(events, `📚 Trocou para o curso de ${curso.nome}. Progresso anterior perdido.`, 'neutral');

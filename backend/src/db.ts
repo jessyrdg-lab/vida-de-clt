@@ -14,6 +14,7 @@ type PostgresPool = {
 
 let postgres: PostgresPool | null = null;
 let sqlite: Database.Database | null = null;
+let databaseInitialization: Promise<void> | null = null;
 
 const sqliteStatements: {
   insertSession?: Database.Statement;
@@ -24,19 +25,21 @@ const sqliteStatements: {
   getAllStates?: Database.Statement;
 } = {};
 
-const databaseReady = (async () => {
+async function setupDatabase(): Promise<void> {
   if (usesPostgres) {
     // O pacote pg é instalado automaticamente no Render. O import dinâmico
     // permite continuar usando SQLite localmente sem exigir um Postgres local.
     const postgresDriverName = 'pg';
     const { Pool } = await import(postgresDriverName) as any;
-    postgres = new Pool({
-      connectionString: DATABASE_URL,
-      ssl: { rejectUnauthorized: false },
-      max: 5,
-      idleTimeoutMillis: 30_000,
-      connectionTimeoutMillis: 15_000,
-    }) as PostgresPool;
+    if (!postgres) {
+      postgres = new Pool({
+        connectionString: DATABASE_URL,
+        ssl: { rejectUnauthorized: false },
+        max: 5,
+        idleTimeoutMillis: 30_000,
+        connectionTimeoutMillis: 15_000,
+      }) as PostgresPool;
+    }
 
     const maxAttempts = 8;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -66,12 +69,13 @@ const databaseReady = (async () => {
     }
   }
 
-  const { default: SqliteDatabase } = await import('better-sqlite3');
-  const databasePath = path.join(__dirname, '../../game.db');
-  sqlite = new SqliteDatabase(databasePath);
-  sqlite.pragma('journal_mode = WAL');
-  sqlite.pragma('foreign_keys = ON');
-  sqlite.exec(`
+  if (!sqlite) {
+    const { default: SqliteDatabase } = await import('better-sqlite3');
+    const databasePath = path.join(__dirname, '../../game.db');
+    sqlite = new SqliteDatabase(databasePath);
+    sqlite.pragma('journal_mode = WAL');
+    sqlite.pragma('foreign_keys = ON');
+    sqlite.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
       token      TEXT PRIMARY KEY,
       created_at INTEGER NOT NULL DEFAULT (unixepoch())
@@ -85,22 +89,23 @@ const databaseReady = (async () => {
     );
 
     CREATE INDEX IF NOT EXISTS idx_game_states_token ON game_states(token);
-  `);
+    `);
 
-  sqliteStatements.insertSession = sqlite.prepare('INSERT OR IGNORE INTO sessions (token) VALUES (?)');
-  sqliteStatements.getState = sqlite.prepare('SELECT stats, events FROM game_states WHERE token = ?');
-  sqliteStatements.upsertState = sqlite.prepare(`
+    sqliteStatements.insertSession = sqlite.prepare('INSERT OR IGNORE INTO sessions (token) VALUES (?)');
+    sqliteStatements.getState = sqlite.prepare('SELECT stats, events FROM game_states WHERE token = ?');
+    sqliteStatements.upsertState = sqlite.prepare(`
     INSERT INTO game_states (token, stats, events, updated_at)
     VALUES (?, ?, ?, unixepoch())
     ON CONFLICT(token) DO UPDATE SET
       stats = excluded.stats,
       events = excluded.events,
       updated_at = excluded.updated_at
-  `);
-  sqliteStatements.deleteState = sqlite.prepare('DELETE FROM game_states WHERE token = ?');
-  sqliteStatements.sessionExists = sqlite.prepare('SELECT 1 FROM sessions WHERE token = ?');
-  sqliteStatements.getAllStates = sqlite.prepare('SELECT token, stats, events FROM game_states');
-})();
+    `);
+    sqliteStatements.deleteState = sqlite.prepare('DELETE FROM game_states WHERE token = ?');
+    sqliteStatements.sessionExists = sqlite.prepare('SELECT 1 FROM sessions WHERE token = ?');
+    sqliteStatements.getAllStates = sqlite.prepare('SELECT token, stats, events FROM game_states');
+  }
+}
 
 export interface StoredState {
   stats: GameStats;
@@ -118,12 +123,36 @@ function parseJson<T>(value: unknown): T {
   return (typeof value === 'string' ? JSON.parse(value) : value) as T;
 }
 
+function normalizeStats(stats: GameStats): GameStats {
+  if (typeof stats.gameOver !== 'boolean') {
+    let legacyDeathReason = '';
+    if (stats.comida <= 0) {
+      legacyDeathReason = 'FOME: Seu estoque de comida acabou.';
+    } else if (stats.unlockedMechanics?.saude && stats.saudeValue <= 0) {
+      legacyDeathReason = 'COLAPSO DE SAÚDE: Seu corpo não resistiu.';
+    } else if (stats.mesesEmAtraso >= 15) {
+      legacyDeathReason = 'COLAPSO FINANCEIRO: Seus juros atingiram 80%.';
+    }
+    stats.gameOver = legacyDeathReason !== '';
+    stats.deathReason = legacyDeathReason;
+  } else if (typeof stats.deathReason !== 'string') {
+    stats.deathReason = '';
+  }
+  return stats;
+}
+
 export async function initializeDatabase(): Promise<void> {
-  await databaseReady;
+  if (!databaseInitialization) {
+    databaseInitialization = setupDatabase().catch(error => {
+      databaseInitialization = null;
+      throw error;
+    });
+  }
+  await databaseInitialization;
 }
 
 export async function createSession(token: string): Promise<void> {
-  await databaseReady;
+  await initializeDatabase();
   if (postgres) {
     await postgres.query('INSERT INTO sessions (token) VALUES ($1) ON CONFLICT (token) DO NOTHING', [token]);
     return;
@@ -132,7 +161,7 @@ export async function createSession(token: string): Promise<void> {
 }
 
 export async function sessionExists(token: string): Promise<boolean> {
-  await databaseReady;
+  await initializeDatabase();
   if (postgres) {
     const result = await postgres.query('SELECT 1 FROM sessions WHERE token = $1', [token]);
     return result.rows.length > 0;
@@ -141,7 +170,7 @@ export async function sessionExists(token: string): Promise<boolean> {
 }
 
 export async function loadState(token: string): Promise<StoredState | null> {
-  await databaseReady;
+  await initializeDatabase();
   const row = postgres
     ? (await postgres.query(`
         SELECT stats,
@@ -158,7 +187,7 @@ export async function loadState(token: string): Promise<StoredState | null> {
   if (!row) return null;
   try {
     return {
-      stats: parseJson<GameStats>(row.stats),
+      stats: normalizeStats(parseJson<GameStats>(row.stats)),
       events: parseJson<GameEvent[]>(row.events),
     };
   } catch {
@@ -167,7 +196,7 @@ export async function loadState(token: string): Promise<StoredState | null> {
 }
 
 export async function saveState(token: string, stats: GameStats, events: GameEvent[]): Promise<void> {
-  await databaseReady;
+  await initializeDatabase();
   const statsJson = JSON.stringify(stats);
   const eventsJson = JSON.stringify(events.slice(-MAX_STORED_EVENTS));
 
@@ -187,7 +216,7 @@ export async function saveState(token: string, stats: GameStats, events: GameEve
 }
 
 export async function deleteState(token: string): Promise<void> {
-  await databaseReady;
+  await initializeDatabase();
   if (postgres) {
     await postgres.query('DELETE FROM game_states WHERE token = $1', [token]);
     return;
@@ -196,7 +225,7 @@ export async function deleteState(token: string): Promise<void> {
 }
 
 export async function getLeaderboard(limit = 10): Promise<LeaderboardEntry[]> {
-  await databaseReady;
+  await initializeDatabase();
   const safeLimit = Math.max(0, Math.floor(limit));
 
   if (postgres) {

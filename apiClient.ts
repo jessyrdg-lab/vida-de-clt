@@ -128,7 +128,7 @@ async function request(method: string, path: string, body?: object): Promise<any
     clearToken();
   }
 
-  return data;
+  return { ...data, httpStatus: res.status };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -200,11 +200,19 @@ export async function saveGame(): Promise<DispatchResult> {
 /**
  * Apaga o save do servidor. Chame antes de mostrar o modal de novo nick.
  */
-export async function deleteSave(): Promise<void> {
+export async function deleteSave(): Promise<DispatchResult> {
   try {
-    await request('DELETE', '/save');
+    const data = await request('DELETE', '/save');
+    const saveDefinitelyMissing = data.httpStatus === 401 || (
+      data.httpStatus === 404 && ['Sessão não encontrada.', 'Estado não encontrado.'].includes(data.error)
+    );
+    if (data.ok || saveDefinitelyMissing) {
+      clearToken();
+      return { ok: true };
+    }
+    return { ok: false, error: data.error || 'Não foi possível apagar o save.' };
   } catch {
-    // Falha silenciosa — o token é local de qualquer forma
+    // Mantém o token no navegador: o jogador pode tentar novamente sem perder acesso.
+    return { ok: false, error: 'Não foi possível conectar ao servidor para apagar o save.' };
   }
-  clearToken();
 }

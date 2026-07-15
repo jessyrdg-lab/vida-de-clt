@@ -85,6 +85,8 @@ export function createInitialStats(nick: string): GameStats {
   return {
     playerNick: nick,
     devModeUsed: false,
+    gameOver: false,
+    deathReason: '',
     saldo: 500,
     salario: 1618,
     comida: 5,
@@ -120,8 +122,6 @@ export function createInitialStats(nick: string): GameStats {
     ownedHousesIds: [],
     perHouseUpgrades: {},
     roomUpgrades: { sala: 0, cozinha: 0, escritorio: 0, armazem: 0 },
-    maxComida: 15,
-    maxLenha: 15,
     saudeValue: 100,
     doencaAtiva: null,
     humor: 'Normal',

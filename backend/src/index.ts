@@ -89,12 +89,18 @@ app.listen(PORT, () => {
   console.log(`[Vida de CLT Backend] Banco: ${process.env.DATABASE_URL ? 'PostgreSQL' : 'SQLite local'}`);
 });
 
-void initializeDatabase()
-  .then(() => {
+async function keepDatabaseConnected(): Promise<void> {
+  databaseStatus = 'starting';
+  try {
+    await initializeDatabase();
     databaseStatus = 'ready';
     console.log('[Vida de CLT Backend] Banco pronto.');
-  })
-  .catch(error => {
+  } catch (error) {
     databaseStatus = 'error';
     console.error('[Vida de CLT Backend] Falha ao iniciar o banco:', error);
-  });
+    console.warn('[Vida de CLT Backend] Uma nova tentativa será feita em 30 segundos.');
+    setTimeout(() => void keepDatabaseConnected(), 30_000);
+  }
+}
+
+void keepDatabaseConnected();
