@@ -6,6 +6,7 @@ import { GameStats, GameEvent } from './types.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATABASE_URL = process.env.DATABASE_URL?.trim();
 const usesPostgres = Boolean(DATABASE_URL);
+const MAX_STORED_EVENTS = 200;
 
 type PostgresPool = {
   query: (sql: string, values?: unknown[]) => Promise<{ rows: any[] }>;
@@ -142,7 +143,16 @@ export async function sessionExists(token: string): Promise<boolean> {
 export async function loadState(token: string): Promise<StoredState | null> {
   await databaseReady;
   const row = postgres
-    ? (await postgres.query('SELECT stats, events FROM game_states WHERE token = $1', [token])).rows[0]
+    ? (await postgres.query(`
+        SELECT stats,
+          COALESCE((
+            SELECT jsonb_agg(entry.item ORDER BY entry.ordinality)
+            FROM jsonb_array_elements(game_states.events) WITH ORDINALITY AS entry(item, ordinality)
+            WHERE entry.ordinality > GREATEST(jsonb_array_length(game_states.events) - $2, 0)
+          ), '[]'::jsonb) AS events
+        FROM game_states
+        WHERE token = $1
+      `, [token, MAX_STORED_EVENTS])).rows[0]
     : sqliteStatements.getState!.get(token) as { stats: string; events: string } | undefined;
 
   if (!row) return null;
@@ -159,7 +169,7 @@ export async function loadState(token: string): Promise<StoredState | null> {
 export async function saveState(token: string, stats: GameStats, events: GameEvent[]): Promise<void> {
   await databaseReady;
   const statsJson = JSON.stringify(stats);
-  const eventsJson = JSON.stringify(events);
+  const eventsJson = JSON.stringify(events.slice(-MAX_STORED_EVENTS));
 
   if (postgres) {
     await postgres.query(`
@@ -187,9 +197,40 @@ export async function deleteState(token: string): Promise<void> {
 
 export async function getLeaderboard(limit = 10): Promise<LeaderboardEntry[]> {
   await databaseReady;
-  const rows = postgres
-    ? (await postgres.query('SELECT token, stats, events FROM game_states')).rows
-    : sqliteStatements.getAllStates!.all() as Array<{ token: string; stats: string; events: string }>;
+  const safeLimit = Math.max(0, Math.floor(limit));
+
+  if (postgres) {
+    const rows = (await postgres.query(`
+      SELECT
+        token,
+        stats->>'playerNick' AS nick,
+        (stats->>'saldo')::double precision AS saldo,
+        COALESCE((stats->>'mes')::integer, 0) AS meses_jogados
+      FROM game_states
+      WHERE COALESCE((stats->>'devModeUsed')::boolean, false) = false
+        AND stats ? 'playerNick'
+        AND stats ? 'saldo'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(events) AS event_item(item)
+          WHERE event_item.item->>'message' LIKE '%ferramentas de desenvolvimento%'
+        )
+      ORDER BY
+        (stats->>'saldo')::double precision DESC,
+        COALESCE((stats->>'mes')::integer, 0) DESC,
+        stats->>'playerNick' ASC
+      LIMIT $1
+    `, [safeLimit])).rows;
+
+    return rows.map(row => ({
+      token: String(row.token),
+      nick: String(row.nick),
+      saldo: Number(row.saldo),
+      mesesJogados: Number(row.meses_jogados),
+    }));
+  }
+
+  const rows = sqliteStatements.getAllStates!.all() as Array<{ token: string; stats: string; events: string }>;
   const entries: LeaderboardEntry[] = [];
 
   for (const row of rows) {
@@ -219,5 +260,5 @@ export async function getLeaderboard(limit = 10): Promise<LeaderboardEntry[]> {
       b.mesesJogados - a.mesesJogados ||
       a.nick.localeCompare(b.nick, 'pt-BR')
     )
-    .slice(0, Math.max(0, limit));
+    .slice(0, safeLimit);
 }
