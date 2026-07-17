@@ -955,7 +955,7 @@ const App: React.FC = () => {
         salaryBase = Math.floor(salaryBase * PRODUTIVIDADE_SALARY_MOD[previous.produtividade]);
       }
       const rendimento = next.poupanca - previous.poupanca;
-      const bonusEvento = next.saldo - previous.saldo - salaryBase;
+      const bonusEvento = result.flags?.monthlyEventBalanceChange ?? 0;
       const jurosAplicados = rate > 0 ? Math.floor(previous.contas * (rate / 100)) : 0;
       const contasAdicionadas = Math.max(0, next.contasEmAtraso - previous.contasEmAtraso - jurosAplicados);
       const newEvents = result.events.slice(previousEventsCount);

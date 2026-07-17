@@ -162,5 +162,6 @@ export interface ActionResult {
     seasonNotice?: Season;
     gameOver?: boolean;
     deathReason?: string;
+    monthlyEventBalanceChange?: number;
   };
 }

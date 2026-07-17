@@ -276,6 +276,7 @@ export function applyPassMonth(stats: GameStats, events: GameEvent[]): {
   if (selectedEvent.saldoMult) {
     bonusSaldo = Math.floor(stats.salario * selectedEvent.saldoMult);
   }
+  flags.monthlyEventBalanceChange = bonusSaldo;
 
   // ── Salary calculation ───────────────────────────────────
   let salaryPenalty = 1;

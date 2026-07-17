@@ -18,6 +18,27 @@ test('o rendimento aumenta somente a poupança', () => {
   assert.equal(stats.saldo, 0);
 });
 
+test('o relatório recebe somente o valor exato do evento mensal', () => {
+  const originalRandom = Math.random;
+  const rolls = [0.31, 0.20];
+  Math.random = () => rolls.shift() ?? 0.5;
+
+  try {
+    const stats = createInitialStats('Teste');
+    stats.saldo = 0;
+    stats.salario = 10_000;
+    stats.contas = 0;
+    stats.comida = 10;
+
+    const result = applyPassMonth(stats, []);
+
+    assert.equal(result.flags?.monthlyEventBalanceChange, -2_000);
+    assert.equal(stats.saldo, 8_000);
+  } finally {
+    Math.random = originalRandom;
+  }
+});
+
 test('a morte fica gravada no estado da partida', () => {
   const stats = createInitialStats('Teste');
   stats.mes = 10;

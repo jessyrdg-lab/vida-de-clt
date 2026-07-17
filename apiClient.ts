@@ -40,6 +40,7 @@ export interface DispatchResult {
     seasonNotice?: 'Primavera' | 'Verão' | 'Outono' | 'Inverno';
     gameOver?: boolean;
     deathReason?: string;
+    monthlyEventBalanceChange?: number;
   };
 }
 
