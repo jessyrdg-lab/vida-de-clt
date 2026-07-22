@@ -53,13 +53,24 @@ export const TITLES_LIST = [
   { id: 'Diplomado',    desc: 'Complete a graduação da faculdade' },
   { id: 'WinterWarrior',desc: 'Sobreviva ao inverno' },
   { id: 'CryptoMaster', desc: 'Compre sua 1° criptomoeda' },
-  { id: 'Magnata',      desc: 'Atinja R$ 100.000 de saldo' },
+  { id: 'Empresario',   desc: 'Compre sua 1ª empresa' },
+  { id: 'Magnata',      desc: 'Atinja R$ 1.000.000.000 de saldo' },
   { id: 'CLThanos',     desc: 'Atinja 100 meses de trabalho' },
   { id: 'Doctor',       desc: 'Complete toda a faculdade' },
   { id: 'OneMillion',   desc: 'Atinja R$ 1.000.000' },
   { id: 'Sabido',       desc: 'Complete todos os cursos' },
+  { id: 'Aposentado',   desc: 'Complete sua primeira aposentadoria' },
+  { id: 'Unboxer',      desc: 'Abra 1.000 caixas de artefatos' },
+  { id: 'Colecionador', desc: 'Complete o Index de artefatos' },
+  { id: 'NoLife',       desc: 'Abra 10.000 caixas de artefatos' },
+  { id: 'ImmortalOne',  desc: 'Complete todos os 10 rebirths' },
   { id: 'GOD',          desc: 'Tenha todos os títulos' },
 ];
+
+// Títulos exclusivos, como Global Player, não fazem parte do requisito do GOD.
+export const GOD_REQUIRED_TITLE_IDS = TITLES_LIST
+  .filter(title => title.id !== 'GOD')
+  .map(title => title.id);
 
 const INITIAL_STOCKS: Stock[] = [
   { symbol: 'PETR4',  name: 'Petrobras',          price: 35.50,  history: [34,34.5,35,34.8,35.2,35,34.5,35.1,35.3,35.5], volatility: 0.15 },
@@ -110,9 +121,15 @@ export function createInitialStats(nick: string): GameStats {
       timestamp: Date.now(),
       read: false,
     }],
-    stocks: INITIAL_STOCKS,
-    cryptos: INITIAL_CRYPTOS,
+    stocks: INITIAL_STOCKS.map(stock => ({ ...stock, history: [...stock.history] })),
+    cryptos: INITIAL_CRYPTOS.map(crypto => ({ ...crypto, history: [...crypto.history] })),
     portfolio: {},
+    companies: [],
+    retirementCount: 0,
+    artifactLevels: {},
+    equippedArtifacts: [],
+    artifactBoxes: { basic: 0, premium: 0, elite: 0 },
+    artifactBoxesOpened: 0,
     unlockedTitles: [],
     equippedTitle: '',
     totalFoodBought: 0,

@@ -66,6 +66,66 @@
       .dark *::-webkit-scrollbar-thumb:hover {
         background-color: #002BEB;
       }
+
+      .artifact-silhouette {
+        filter: brightness(0) saturate(100%);
+        opacity: 0.72;
+        transform: translateZ(0);
+      }
+
+      @keyframes artifact-box-opening {
+        0%, 100% { transform: translateY(0) rotate(0deg) scale(1); }
+        12% { transform: translateY(-10px) rotate(-10deg) scale(1.04); }
+        24% { transform: translateY(0) rotate(9deg) scale(0.98); }
+        36% { transform: translateY(-14px) rotate(-8deg) scale(1.08); }
+        50% { transform: translateY(0) rotate(7deg) scale(1); }
+        64% { transform: translateY(-18px) rotate(-5deg) scale(1.12); }
+        78% { transform: translateY(0) rotate(4deg) scale(1.03); }
+        90% { transform: translateY(-6px) rotate(-2deg) scale(1.08); }
+      }
+
+      @keyframes artifact-reward-reveal {
+        0% { opacity: 0; transform: scale(0.35) rotate(-12deg); filter: brightness(2); }
+        60% { opacity: 1; transform: scale(1.12) rotate(3deg); filter: brightness(1.3); }
+        100% { opacity: 1; transform: scale(1) rotate(0); filter: brightness(1); }
+      }
+
+      .artifact-box-opening { animation: artifact-box-opening 0.85s ease-in-out infinite; }
+      .artifact-reward-reveal { animation: artifact-reward-reveal 0.55s cubic-bezier(.2,.9,.2,1) both; }
+
+      @keyframes artifact-rgb-text {
+        0% { color: #ff4d4d; text-shadow: 0 0 4px #ff4d4d, 0 0 9px rgba(255, 77, 77, .65); }
+        20% { color: #ffd84d; text-shadow: 0 0 4px #ffd84d, 0 0 9px rgba(255, 216, 77, .65); }
+        40% { color: #61ff8b; text-shadow: 0 0 4px #61ff8b, 0 0 9px rgba(97, 255, 139, .65); }
+        60% { color: #56b7ff; text-shadow: 0 0 4px #56b7ff, 0 0 9px rgba(86, 183, 255, .65); }
+        80% { color: #b775ff; text-shadow: 0 0 4px #b775ff, 0 0 9px rgba(183, 117, 255, .65); }
+        100% { color: #ff4db8; text-shadow: 0 0 4px #ff4db8, 0 0 9px rgba(255, 77, 184, .65); }
+      }
+
+      .artifact-chance-rgb { animation: artifact-rgb-text 2.4s linear infinite alternate; }
+
+      @keyframes artifact-rgb-background {
+        0% { background-position: 0% 50%; }
+        50% { background-position: 100% 50%; }
+        100% { background-position: 0% 50%; }
+      }
+
+      .artifact-legendary-rgb {
+        background: linear-gradient(120deg, #ff3b3b, #ffd83d, #45f57b, #38bdf8, #8b5cf6, #ff3bbd) !important;
+        background-size: 350% 350% !important;
+        animation: artifact-rgb-background 3.2s linear infinite !important;
+      }
+
+      @keyframes artifact-rgb-border {
+        0% { border-color: #ff4d4d; box-shadow: 0 0 12px rgba(255, 77, 77, .45); }
+        20% { border-color: #ffd84d; box-shadow: 0 0 12px rgba(255, 216, 77, .45); }
+        40% { border-color: #61ff8b; box-shadow: 0 0 12px rgba(97, 255, 139, .45); }
+        60% { border-color: #56b7ff; box-shadow: 0 0 12px rgba(86, 183, 255, .45); }
+        80% { border-color: #b775ff; box-shadow: 0 0 12px rgba(183, 117, 255, .45); }
+        100% { border-color: #ff4db8; box-shadow: 0 0 12px rgba(255, 77, 184, .45); }
+      }
+
+      .artifact-legendary-border-rgb { animation: artifact-rgb-border 2.8s linear infinite alternate !important; }
     </style>
   <script type="importmap">
 {

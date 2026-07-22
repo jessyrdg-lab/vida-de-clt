@@ -2,11 +2,15 @@ import type Database from 'better-sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GameStats, GameEvent } from './types.js';
+import { COMPANY_DEFINITIONS } from './companies.js';
+import { ARTIFACT_DEFINITIONS, MAX_ARTIFACT_LEVEL, MAX_EQUIPPED_ARTIFACTS } from './artifacts.js';
+import { GOD_REQUIRED_TITLE_IDS } from './constants.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATABASE_URL = process.env.DATABASE_URL?.trim();
 const usesPostgres = Boolean(DATABASE_URL);
 const MAX_STORED_EVENTS = 200;
+export const MIN_LEADERBOARD_BALANCE = 1_000_000;
 
 type PostgresPool = {
   query: (sql: string, values?: unknown[]) => Promise<{ rows: any[] }>;
@@ -124,6 +128,61 @@ function parseJson<T>(value: unknown): T {
 }
 
 function normalizeStats(stats: GameStats): GameStats {
+  stats.unlockedTitles = Array.from(new Set(Array.isArray(stats.unlockedTitles) ? stats.unlockedTitles : []));
+  if (!GOD_REQUIRED_TITLE_IDS.every(title => stats.unlockedTitles.includes(title))) {
+    stats.unlockedTitles = stats.unlockedTitles.filter(title => title !== 'GOD');
+    if (stats.equippedTitle === 'GOD') stats.equippedTitle = '';
+  }
+  stats.retirementCount = Math.max(0, Math.min(10, Math.floor(Number(stats.retirementCount) || 0)));
+  const artifactDefinitions = new Map(ARTIFACT_DEFINITIONS.map(artifact => [artifact.id, artifact]));
+  const knownArtifactIds = new Set(artifactDefinitions.keys());
+  const legacyArtifactIds: Record<string, string> = {
+    'cracha-dourado': 'holerite-rubi',
+    'marmita-reforcada': 'cartao-beneficios',
+    'machado-nordico': 'seguro-bolso',
+    'cofrinho-vintage': 'cofre-dividendos',
+    'capacete-seguranca': 'blindagem-patrimonial',
+    'cafe-premium': 'medalha-desempenho',
+    'trevo-rh': 'agenda-oportunidades',
+    'pasta-executiva': 'pasta-contratos',
+    'extintor-crise': 'extintor-corporativo',
+    'relogio-ponto': 'selo-franquia',
+    'agenda-equilibrio': 'manual-retencao',
+    'coroa-empreendedor': 'holding-dourada',
+  };
+  const rawArtifactLevels = stats.artifactLevels && typeof stats.artifactLevels === 'object' ? stats.artifactLevels : {};
+  stats.artifactLevels = Object.fromEntries(
+    Object.entries(rawArtifactLevels)
+      .map(([artifactId, level]) => [legacyArtifactIds[artifactId] ?? artifactId, level] as const)
+      .filter(([artifactId]) => knownArtifactIds.has(artifactId))
+      .map(([artifactId, level]) => {
+        const maxLevel = artifactDefinitions.get(artifactId)?.rarity === 'Divinity' ? 1 : MAX_ARTIFACT_LEVEL;
+        return [artifactId, Math.max(1, Math.min(maxLevel, Math.floor(Number(level) || 1)))];
+      })
+  );
+  stats.equippedArtifacts = Array.from(new Set((Array.isArray(stats.equippedArtifacts) ? stats.equippedArtifacts : []).map(artifactId => legacyArtifactIds[artifactId] ?? artifactId)))
+    .filter(artifactId => knownArtifactIds.has(artifactId) && stats.artifactLevels[artifactId] > 0)
+    .slice(0, MAX_EQUIPPED_ARTIFACTS);
+  const rawArtifactBoxes: unknown = stats.artifactBoxes;
+  const legacyBasicBoxes = typeof rawArtifactBoxes === 'number' ? rawArtifactBoxes : 0;
+  const boxRecord = rawArtifactBoxes && typeof rawArtifactBoxes === 'object' ? rawArtifactBoxes as Record<string, unknown> : {};
+  stats.artifactBoxes = {
+    basic: Math.max(0, Math.min(1_000, Math.floor(Number(boxRecord.basic ?? legacyBasicBoxes) || 0))),
+    premium: Math.max(0, Math.min(1_000, Math.floor(Number(boxRecord.premium) || 0))),
+    elite: Math.max(0, Math.min(1_000, Math.floor(Number(boxRecord.elite) || 0))),
+  };
+  stats.artifactBoxesOpened = Math.max(0, Math.floor(Number(stats.artifactBoxesOpened) || 0));
+  const knownCompanyIds = new Set(COMPANY_DEFINITIONS.map(company => company.id));
+  stats.companies = Array.isArray(stats.companies)
+    ? stats.companies
+        .filter(company => company && knownCompanyIds.has(company.id))
+        .map(company => ({
+          id: company.id,
+          level: Math.max(1, Math.min(5, Math.floor(Number(company.level) || 1))),
+          employees: Math.max(0, Math.floor(Number(company.employees) || 0)),
+          strategy: ['safe', 'balanced', 'aggressive'].includes(company.strategy) ? company.strategy : 'balanced',
+        }))
+    : [];
   if (typeof stats.gameOver !== 'boolean') {
     let legacyDeathReason = '';
     if (stats.comida <= 0) {
@@ -239,6 +298,7 @@ export async function getLeaderboard(limit = 10): Promise<LeaderboardEntry[]> {
       WHERE COALESCE((stats->>'devModeUsed')::boolean, false) = false
         AND stats ? 'playerNick'
         AND stats ? 'saldo'
+        AND (stats->>'saldo')::double precision >= $2
         AND NOT EXISTS (
           SELECT 1
           FROM jsonb_array_elements(events) AS event_item(item)
@@ -249,7 +309,7 @@ export async function getLeaderboard(limit = 10): Promise<LeaderboardEntry[]> {
         COALESCE((stats->>'mes')::integer, 0) DESC,
         stats->>'playerNick' ASC
       LIMIT $1
-    `, [safeLimit])).rows;
+    `, [safeLimit, MIN_LEADERBOARD_BALANCE])).rows;
 
     return rows.map(row => ({
       token: String(row.token),
@@ -271,6 +331,7 @@ export async function getLeaderboard(limit = 10): Promise<LeaderboardEntry[]> {
       );
       if (usedDevTools) continue;
       if (typeof stats.playerNick !== 'string' || !Number.isFinite(stats.saldo)) continue;
+      if (stats.saldo < MIN_LEADERBOARD_BALANCE) continue;
 
       entries.push({
         token: row.token,

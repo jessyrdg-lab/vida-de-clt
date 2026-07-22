@@ -1,5 +1,14 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { GameStats, GameEvent, JobOffer, Stock, AssetPosition, EmailMessage, InterviewQuestion, House, RoomUpgrades, HealthStatus, HappinessStatus, ProductivityStatus, DoencaAtiva } from './types';
+import { GameStats, GameEvent, JobOffer, Stock, AssetPosition, EmailMessage, InterviewQuestion, House, RoomUpgrades, HealthStatus, HappinessStatus, ProductivityStatus, DoencaAtiva, CompanyStrategy, ArtifactBoxType } from './types';
+import {
+  COMPANY_DEFINITIONS, COMPANY_STRATEGIES, COMPANY_UNLOCK_WEALTH,
+  getCompanyMaintenance, getCompanyProjectedGrossRevenue,
+  getCompanyRequiredEmployees, getCompanyRiskChance, getCompanyStrategy, getCompanyUpgradeCost, getEmployeeHiringCost,
+} from './companies';
+import {
+  ARTIFACT_BOX_DEFINITIONS, ARTIFACT_DEFINITIONS, ARTIFACT_RARITY_STYLE, MAX_ARTIFACT_LEVEL, MAX_EQUIPPED_ARTIFACTS, ArtifactDefinition,
+  describeArtifactEffect, getArtifactBoxPrice, getArtifactEffects,
+} from './artifacts';
 import { StatCard } from './components/StatCard';
 import { ActionLog } from './components/ActionLog';
 import { getInterviewQuestion, resetInterviewSession } from './questionBank';
@@ -17,6 +26,18 @@ import {
   LeaderboardEntry,
 } from './apiClient';
 
+const getArtifactIconStyle = (rarity: keyof typeof ARTIFACT_RARITY_STYLE) =>
+  rarity === 'Lendário'
+    ? 'artifact-legendary-rgb text-white'
+    : `bg-gradient-to-br ${ARTIFACT_RARITY_STYLE[rarity]} ${rarity === 'Divinity' ? 'text-slate-900' : 'text-white'}`;
+
+const getArtifactCardStyle = (artifact: ArtifactDefinition) =>
+  `${ARTIFACT_RARITY_STYLE[artifact.rarity]} ${artifact.rarity === 'Lendário' ? 'artifact-legendary-border-rgb' : ''}`;
+
+const ArtifactIcon = ({ artifact }: { artifact: ArtifactDefinition }) => artifact.id === 'cartao-black'
+  ? <img src={`${import.meta.env.BASE_URL}artifacts/cartao-black.svg`} alt="Cartão Black" className="h-[78%] w-[88%] object-contain" />
+  : <>{artifact.emoji}</>;
+
 // Definição dos Títulos
 const TITLES_LIST = [
   // FÁCIL
@@ -31,19 +52,25 @@ const TITLES_LIST = [
   { id: 'CryptoMaster', name: 'Cripto Master', desc: 'Compre sua 1° criptomoeda', difficulty: 'Médio' },
 
   // DIFÍCIL
-  { id: 'Magnata', name: 'Magnata', desc: 'Atinja R$ 100.000 de saldo', difficulty: 'Difícil' },
+  { id: 'Empresario', name: 'Empresário', desc: 'Compre sua 1ª empresa', difficulty: 'Difícil' },
   { id: 'CLThanos', name: 'CLThanos', desc: 'Atinja 100 meses de trabalho', difficulty: 'Difícil' },
   { id: 'Doctor', name: 'Doctor', desc: 'Complete toda a faculdade', difficulty: 'Difícil' },
   { id: 'Sabido', name: 'Sabido', desc: 'Complete todos os cursos', difficulty: 'Difícil' },
+  { id: 'OneMillion', name: 'One in a million', desc: 'Atinja R$ 1.000.000', difficulty: 'Difícil' },
 
   // INSANO
-  { id: 'OneMillion', name: 'One in a million', desc: 'Atinja R$ 1.000.000', difficulty: 'Insano' },
-
-  // EXCLUSIVO (não é necessário para desbloquear o GøD)
-  { id: 'GlobalPlayer', name: 'Global Player', desc: 'Esteja entre os 10 jogadores mais ricos do Ranking Global', difficulty: 'Exclusivo' },
+  { id: 'Aposentado', name: 'Aposentado', desc: 'Complete sua primeira aposentadoria', difficulty: 'Insano' },
+  { id: 'Magnata', name: 'Magnata', desc: 'Atinja R$ 1.000.000.000 de saldo', difficulty: 'Insano' },
+  { id: 'Unboxer', name: 'Unboxer', desc: 'Abra 1.000 caixas de artefatos', difficulty: 'Insano' },
+  { id: 'Colecionador', name: 'Colecionador', desc: 'Complete o Index de artefatos', difficulty: 'Insano' },
+  { id: 'NoLife', name: 'No Life', desc: 'Abra 10.000 caixas de artefatos', difficulty: 'Insano+++' },
 
   // INSANO +++
-  { id: 'GOD', name: 'GøD', desc: 'Tenha todos os títulos (Exceto exclusivos)', difficulty: 'Insano+++' }
+  { id: 'ImmortalOne', name: 'Immortal One', desc: 'Complete todos os 10 rebirths', difficulty: 'Insano+++' },
+  { id: 'GOD', name: 'GøD', desc: 'Tenha todos os títulos (Exceto exclusivos)', difficulty: 'Insano+++' },
+
+  // EXCLUSIVO (não é necessário para desbloquear o GøD)
+  { id: 'GlobalPlayer', name: 'Global Player', desc: 'Esteja entre os 10 jogadores mais ricos do Ranking Global', difficulty: 'Exclusivo' }
 ];
 
 const SEASON_IMAGES = [
@@ -90,6 +117,18 @@ const getTitleStyle = (titleName: string) => {
       return `${baseClasses} bg-gradient-to-r from-rose-300 via-red-500 to-red-700 bg-clip-text text-transparent`;
     case 'Sabido':
       return `${baseClasses} bg-gradient-to-r from-orange-200 via-orange-400 to-amber-600 bg-clip-text text-transparent`;
+    case 'Aposentado':
+      return `${baseClasses} bg-gradient-to-r from-cyan-300 via-emerald-400 to-teal-600 bg-clip-text text-transparent`;
+    case 'Empresário':
+      return `${baseClasses} bg-gradient-to-r from-amber-300 via-orange-500 to-rose-500 bg-clip-text text-transparent`;
+    case 'Unboxer':
+      return `${baseClasses} bg-gradient-to-r from-violet-300 via-fuchsia-500 to-pink-500 bg-clip-text text-transparent`;
+    case 'Colecionador':
+      return `${baseClasses} bg-gradient-to-r from-sky-300 via-cyan-400 to-emerald-400 bg-clip-text text-transparent`;
+    case 'No Life':
+      return `${baseClasses} bg-gradient-to-r from-slate-100 via-slate-300 to-slate-400 bg-clip-text text-transparent`;
+    case 'Immortal One':
+      return `${baseClasses} bg-gradient-to-r from-purple-300 via-violet-500 to-fuchsia-700 bg-clip-text text-transparent drop-shadow-[0_0_8px_rgba(139,92,246,0.45)]`;
     case 'Bom de papo':
       return `${baseClasses} bg-gradient-to-r from-green-200 to-green-400 bg-clip-text text-transparent`;
     case 'Global Player':
@@ -273,6 +312,12 @@ const INITIAL_STATS: GameStats = {
   stocks: INITIAL_STOCKS,
   cryptos: INITIAL_CRYPTOS,
   portfolio: {},
+  companies: [],
+  retirementCount: 0,
+  artifactLevels: {},
+  equippedArtifacts: [],
+  artifactBoxes: { basic: 0, premium: 0, elite: 0 },
+  artifactBoxesOpened: 0,
   unlockedTitles: [],
   equippedTitle: '',
   totalFoodBought: 0,
@@ -308,6 +353,17 @@ const INITIAL_STATS: GameStats = {
 const BASE_FOOD_PRICE = 60;
 const WOOD_PRICE = 500;
 const SAVINGS_YIELD = 0.007;
+const MAX_SAVINGS = 1_000_000_000;
+const RETIREMENT_BASE_REQUIREMENT = 10_000_000;
+
+const getRetirementRequirement = (retirementCount: number) =>
+  RETIREMENT_BASE_REQUIREMENT * (2 ** Math.max(0, Math.floor(retirementCount)));
+
+const getRetirementSalaryMultiplier = (retirementCount: number) =>
+  1 + retirementCount * 0.10;
+
+const getRetirementCompanyMultiplier = (retirementCount: number) =>
+  1 + retirementCount * 0.05;
 
 const GRAUS_ACADEMICOS = [
   { nome: "Ensino Médio", custoMensal: 0, mesesNecessarios: 0, salBase: 1600 },
@@ -639,6 +695,11 @@ interface MonthlyReportData {
   lenhaRestante: number;
   vagasNovas: number;
   rendimentoPoupanca: number;
+  companyGrossRevenue: number;
+  companyOperatingCosts: number;
+  companyNetIncome: number;
+  operatingCompanies: number;
+  companyIncidents: string[];
   saldoFinal: number;
   dividaAcumulada: number;
   eventoIA: {
@@ -719,19 +780,36 @@ const App: React.FC = () => {
   const [gameOver, setGameOver] = useState(false);
   const [deathReason, setDeathReason] = useState("");
   const [showReport, setShowReport] = useState(false);
+  const [expandedReportSections, setExpandedReportSections] = useState<Record<'salary' | 'expenses' | 'companies', boolean>>({ salary: false, expenses: false, companies: false });
   const [reportData, setReportData] = useState<MonthlyReportData | null>(null);
   const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('theme') === 'dark');
   
   const [isFoodModalOpen, setIsFoodModalOpen] = useState(false);
   const [isWoodModalOpen, setIsWoodModalOpen] = useState(false);
+  const [isDevModeEnabled, setIsDevModeEnabled] = useState(false);
+  const [isDevPanelOpen, setIsDevPanelOpen] = useState(false);
+  const [isApplyingDevStats, setIsApplyingDevStats] = useState(false);
   const [isPayBillsModalOpen, setIsPayBillsModalOpen] = useState(false);
   const [isInvestModalOpen, setIsInvestModalOpen] = useState(false);
+  const [isCompanyModalOpen, setIsCompanyModalOpen] = useState(false);
+  const [companyTab, setCompanyTab] = useState<'mine' | 'store'>('store');
+  const [isArtifactBoxModalOpen, setIsArtifactBoxModalOpen] = useState(false);
+  const [isArtifactIndexOpen, setIsArtifactIndexOpen] = useState(false);
+  const [openingArtifactBox, setOpeningArtifactBox] = useState<ArtifactBoxType | null>(null);
+  const [autoOpeningBox, setAutoOpeningBox] = useState<ArtifactBoxType | null>(null);
+  const openingArtifactBoxRef = useRef(false);
+  const autoOpeningRef = useRef(false);
   const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
   const [isInventoryModalOpen, setIsInventoryModalOpen] = useState(false);
+  const [inventoryTab, setInventoryTab] = useState<'titles' | 'artifacts'>('titles');
+  const [lastArtifactReward, setLastArtifactReward] = useState<{ id: string; upgraded: boolean } | null>(null);
   const [isAcoesModalOpen, setIsAcoesModalOpen] = useState(false);
   const [acoesTab, setAcoesTab] = useState<'saude' | 'lazer'>('saude');
   const [pendingDisease, setPendingDisease] = useState<DoencaAtiva | null>(null);
   const [isStatusModalOpen, setIsStatusModalOpen] = useState(false);
+  const [isRetirementModalOpen, setIsRetirementModalOpen] = useState(false);
+  const [showRetirementConfirm, setShowRetirementConfirm] = useState(false);
+  const [isRetiring, setIsRetiring] = useState(false);
   const [isLeaderboardOpen, setIsLeaderboardOpen] = useState(false);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [isLoadingLeaderboard, setIsLoadingLeaderboard] = useState(false);
@@ -758,6 +836,10 @@ const App: React.FC = () => {
 
   const [foodQuantityInput, setFoodQuantityInput] = useState<string>("1");
   const [woodQuantityInput, setWoodQuantityInput] = useState<string>("1");
+  const [devSaldoInput, setDevSaldoInput] = useState<string>("");
+  const [devComidaInput, setDevComidaInput] = useState<string>("");
+  const [devLenhaInput, setDevLenhaInput] = useState<string>("");
+  const [devMesInput, setDevMesInput] = useState<string>("");
   const [billPayAmountInput, setBillPayAmountInput] = useState<string>("");
   const [stockTradeQtyInput, setStockTradeQtyInput] = useState<string>("1");
   const [cryptoTradeQtyInput, setCryptoTradeQtyInput] = useState<string>("0.01");
@@ -893,13 +975,30 @@ const App: React.FC = () => {
     return 10 + (stats.mesesEmAtraso - 5) * 7;
   }, [stats.mesesEmAtraso]);
 
+  const artifactEffects = useMemo(
+    () => getArtifactEffects(stats),
+    [stats.equippedArtifacts, stats.artifactLevels],
+  );
+
+  const getDiscountedUiPrice = useCallback(
+    (price: number) => Math.max(0, Math.floor(price * (1 - artifactEffects.allPricesDiscount))),
+    [artifactEffects.allPricesDiscount],
+  );
+
+  const getLifestyleUiPrice = useCallback((basePrice: number) => {
+    const wealthSurcharge = Math.min(1_000_000, Math.floor(Math.max(0, stats.saldo - 100_000) * 0.0025));
+    return getDiscountedUiPrice(basePrice + wealthSurcharge);
+  }, [stats.saldo, getDiscountedUiPrice]);
+
   const getCurrentFoodPrice = useCallback(() => {
     let price = getSeason(stats.mes) === 'Outono' ? BASE_FOOD_PRICE / 1.5 : BASE_FOOD_PRICE;
     if (currentInterestRate >= 24) price *= 2.0;
     else if (currentInterestRate >= 17) price *= 1.4;
-    price *= (1 - stats.cursoBenefits.foodDiscount);
-    return price;
-  }, [stats.mes, currentInterestRate, stats.cursoBenefits.foodDiscount]);
+    price *= (1 - Math.min(0.75, stats.cursoBenefits.foodDiscount));
+    return getDiscountedUiPrice(price);
+  }, [stats.mes, currentInterestRate, stats.cursoBenefits.foodDiscount, getDiscountedUiPrice]);
+
+  const currentWoodPrice = getDiscountedUiPrice(WOOD_PRICE);
 
   const getSeason = (mes: number): Season => {
     const cycle = ((mes - 1) % 12) + 1;
@@ -954,8 +1053,11 @@ const App: React.FC = () => {
       if (previous.unlockedMechanics.produtividade) {
         salaryBase = Math.floor(salaryBase * PRODUTIVIDADE_SALARY_MOD[previous.produtividade]);
       }
+      salaryBase = Math.floor(salaryBase * getRetirementSalaryMultiplier(previous.retirementCount ?? 0));
+      salaryBase = Math.floor(salaryBase * (1 + getArtifactEffects(previous).salaryBonus));
       const rendimento = next.poupanca - previous.poupanca;
-      const bonusEvento = next.saldo - previous.saldo - salaryBase;
+      const companyNetIncome = result.flags?.companyNetIncome ?? 0;
+      const bonusEvento = result.flags?.monthlyEventBalanceChange ?? 0;
       const jurosAplicados = rate > 0 ? Math.floor(previous.contas * (rate / 100)) : 0;
       const contasAdicionadas = Math.max(0, next.contasEmAtraso - previous.contasEmAtraso - jurosAplicados);
       const newEvents = result.events.slice(previousEventsCount);
@@ -979,6 +1081,11 @@ const App: React.FC = () => {
         lenhaRestante: next.lenha,
         vagasNovas,
         rendimentoPoupanca: rendimento,
+        companyGrossRevenue: result.flags?.companyGrossRevenue ?? 0,
+        companyOperatingCosts: result.flags?.companyOperatingCosts ?? 0,
+        companyNetIncome,
+        operatingCompanies: result.flags?.operatingCompanies ?? 0,
+        companyIncidents: result.flags?.companyIncidents ?? [],
         saldoFinal: next.saldo,
         dividaAcumulada: next.contasEmAtraso,
         eventoIA: {
@@ -997,6 +1104,7 @@ const App: React.FC = () => {
         produtividadeMensagem: '',
         unlockedMechanics: next.unlockedMechanics,
       });
+      setExpandedReportSections({ salary: false, expenses: false, companies: false });
       setShowReport(true);
     }
 
@@ -1053,6 +1161,7 @@ const App: React.FC = () => {
   const handleInvestment = async (type: 'deposit' | 'withdraw') => {
     const amount = parseFloat(investAmountInput);
     if (isNaN(amount) || amount <= 0) return;
+    if (type === 'deposit' && stats.poupanca + amount > MAX_SAVINGS) return;
     const action: GameAction = type === 'deposit'
       ? { type: 'INVEST_DEPOSIT', amount }
       : { type: 'INVEST_WITHDRAW', amount };
@@ -1074,6 +1183,10 @@ const App: React.FC = () => {
     setCurrentInterviewQuestion(null);
     setInterviewStatus('ongoing');
     setLastSavedAt(null);
+    setInventoryTab('titles');
+    setLastArtifactReward(null);
+    setIsDevModeEnabled(false);
+    setIsDevPanelOpen(false);
     setIsNickModalOpen(true);
   };
 
@@ -1172,8 +1285,9 @@ const App: React.FC = () => {
     const atividade = LAZER_ATIVIDADES.find(a => a.id === atividadeId);
     if (!atividade) return;
 
-    if (stats.saldo < atividade.custoBase) {
-      showInsufficientFunds(atividade.custoBase);
+    const price = getLifestyleUiPrice(atividade.custoBase);
+    if (stats.saldo < price) {
+      showInsufficientFunds(price);
       return;
     }
 
@@ -1184,8 +1298,9 @@ const App: React.FC = () => {
     const acao = ACOES_SAUDE.find(a => a.id === acaoId);
     if (!acao) return;
 
-    if (stats.saldo < acao.custo) {
-      showInsufficientFunds(acao.custo);
+    const price = getLifestyleUiPrice(acao.custo);
+    if (stats.saldo < price) {
+      showInsufficientFunds(price);
       return;
     }
 
@@ -1196,13 +1311,80 @@ const App: React.FC = () => {
     const doenca = stats.doencaAtiva;
     if (!doenca) return;
 
-    if (stats.saldo < doenca.custo) {
-      showInsufficientFunds(doenca.custo);
+    const price = getLifestyleUiPrice(doenca.custo);
+    if (stats.saldo < price) {
+      showInsufficientFunds(price);
       return;
     }
 
     const result = await runServerAction({ type: 'PAY_DISEASE' });
     if (result.ok) setPendingDisease(null);
+  };
+
+  const fillDevInputs = (source: GameStats = stats) => {
+    setDevSaldoInput(String(source.saldo));
+    setDevComidaInput(String(source.comida));
+    setDevLenhaInput(String(source.lenha));
+    setDevMesInput(String(source.mes));
+  };
+
+  const activateDevMode = async () => {
+    setFoodQuantityInput("1");
+    setIsFoodModalOpen(false);
+
+    const result = await runServerAction({
+      type: 'DEV_SET_STATS',
+      saldo: stats.saldo,
+      comida: stats.comida,
+      lenha: stats.lenha,
+      mes: stats.mes,
+    });
+
+    if (result.ok && result.stats) {
+      setIsDevModeEnabled(true);
+      fillDevInputs(result.stats);
+      setIsDevPanelOpen(true);
+      setSaveSystemMsg({ text: 'Modo de desenvolvimento ativado. Esta partida não participa do ranking.', type: 'success' });
+      setTimeout(() => setSaveSystemMsg(null), 3500);
+    }
+  };
+
+  const handleFoodQuantityChange = (value: string) => {
+    if (value.trim() === 'DevModeOn') {
+      void activateDevMode();
+      return;
+    }
+    setFoodQuantityInput(value);
+  };
+
+  const openDevPanel = () => {
+    fillDevInputs();
+    setIsDevPanelOpen(true);
+  };
+
+  const handleApplyDevStats = async () => {
+    const saldo = Number(devSaldoInput.replace(',', '.'));
+    const comida = Number(devComidaInput);
+    const lenha = Number(devLenhaInput);
+    const mes = Number(devMesInput);
+
+    if (!Number.isFinite(saldo) || !Number.isInteger(comida) || !Number.isInteger(lenha) || !Number.isInteger(mes)) {
+      setSaveSystemMsg({ text: 'Preencha os campos DEV com valores válidos.', type: 'error' });
+      setTimeout(() => setSaveSystemMsg(null), 3500);
+      return;
+    }
+
+    setIsApplyingDevStats(true);
+    try {
+      const result = await runServerAction({ type: 'DEV_SET_STATS', saldo, comida, lenha, mes });
+      if (result.ok) {
+        setIsDevPanelOpen(false);
+        setSaveSystemMsg({ text: 'Dados DEV aplicados e salvos.', type: 'success' });
+        setTimeout(() => setSaveSystemMsg(null), 3000);
+      }
+    } finally {
+      setIsApplyingDevStats(false);
+    }
   };
 
   const handleBuyFood = async () => {
@@ -1231,6 +1413,86 @@ const App: React.FC = () => {
     await runServerAction({ type: 'EQUIP_TITLE', titleId: isEquipped ? '' : titleId });
   };
 
+  const handleBuyAndOpenArtifactBox = async (boxType: ArtifactBoxType): Promise<boolean> => {
+    if (openingArtifactBoxRef.current) return false;
+    openingArtifactBoxRef.current = true;
+    setLastArtifactReward(null);
+    setOpeningArtifactBox(boxType);
+    await new Promise(resolve => setTimeout(resolve, 850));
+    const result = await runServerAction({ type: 'BUY_AND_OPEN_ARTIFACT_BOX', boxType });
+    if (result.ok && result.flags?.artifactAwardedId) {
+      setLastArtifactReward({ id: result.flags.artifactAwardedId, upgraded: result.flags.artifactWasUpgrade === true });
+      await new Promise(resolve => setTimeout(resolve, 1200));
+    }
+    setOpeningArtifactBox(null);
+    openingArtifactBoxRef.current = false;
+    return result.ok;
+  };
+
+  const stopAutoOpening = () => {
+    autoOpeningRef.current = false;
+    setAutoOpeningBox(null);
+  };
+
+  const handleAutoOpenArtifactBox = async (boxType: ArtifactBoxType) => {
+    if (autoOpeningRef.current) {
+      stopAutoOpening();
+      return;
+    }
+    autoOpeningRef.current = true;
+    setAutoOpeningBox(boxType);
+    while (autoOpeningRef.current) {
+      const opened = await handleBuyAndOpenArtifactBox(boxType);
+      if (!opened) break;
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    stopAutoOpening();
+  };
+
+  const handleToggleArtifact = async (artifactId: string) => {
+    await runServerAction({ type: 'TOGGLE_ARTIFACT', artifactId });
+  };
+
+  const handleRetire = async () => {
+    const requirement = getRetirementRequirement(stats.retirementCount ?? 0);
+    if (isRetiring || stats.retirementCount >= 10 || stats.saldo < requirement) return;
+
+    setIsRetiring(true);
+    const result = await runServerAction({ type: 'RETIRE' });
+    if (result.ok) {
+      setIsRetirementModalOpen(false);
+      setShowRetirementConfirm(false);
+      setIsStatusModalOpen(false);
+      setShowReport(false);
+      setReportData(null);
+      setPendingUnlock(null);
+      setPendingDisease(null);
+      setSeasonNotice(null);
+      setHighlightedStats([]);
+      setSelectedEmailId(null);
+      setCompanyTab('store');
+    }
+    setIsRetiring(false);
+  };
+
+  const handleBuyCompany = async (companyId: string) => {
+    const result = await runServerAction({ type: 'BUY_COMPANY', companyId });
+    if (result.ok) setCompanyTab('mine');
+  };
+
+  const handleUpgradeCompany = async (companyId: string) => {
+    await runServerAction({ type: 'UPGRADE_COMPANY', companyId });
+  };
+
+  const handleSetCompanyStrategy = async (companyId: string, strategy: CompanyStrategy) => {
+    await runServerAction({ type: 'SET_COMPANY_STRATEGY', companyId, strategy });
+  };
+
+  const handleHireEmployees = async (companyId: string, qty: number) => {
+    if (qty < 1) return;
+    await runServerAction({ type: 'HIRE_EMPLOYEES', companyId, qty });
+  };
+
   const unreadEmailsCount = stats.emails.filter(e => !e.read).length;
   const selectedEmail = stats.emails.find(e => e.id === selectedEmailId);
 
@@ -1244,6 +1506,35 @@ const App: React.FC = () => {
   );
 
   const isInvestLocked = !(stats.cursosCompletos ?? []).includes('financas');
+  const retirementCount = stats.retirementCount ?? 0;
+  const retirementRequirement = getRetirementRequirement(retirementCount);
+  const retirementSalaryMultiplier = getRetirementSalaryMultiplier(retirementCount);
+  const retirementCompanyMultiplier = getRetirementCompanyMultiplier(retirementCount);
+  const retirementProgress = Math.min(100, (stats.saldo / retirementRequirement) * 100);
+  const canRetire = retirementCount < 10 && stats.saldo >= retirementRequirement;
+  const companyPortfolioValue = calculatePatrimony();
+  const totalWealth = stats.saldo + stats.poupanca + companyPortfolioValue;
+  const isCompanyUnlocked = retirementCount >= 1;
+  const artifactsUnlocked = retirementCount >= 1;
+  const totalArtifactBoxes = Object.values(stats.artifactBoxes ?? {}).reduce((total, amount) => total + Number(amount || 0), 0);
+  const operatingCompanyCount = stats.companies.filter(owned => {
+    const definition = COMPANY_DEFINITIONS.find(company => company.id === owned.id);
+    return !!definition && owned.employees >= getCompanyRequiredEmployees(definition, owned.level);
+  }).length;
+  const conglomerateRevenueBonus = Math.min(0.20, artifactEffects.conglomerateRevenuePerCompany * operatingCompanyCount);
+  const companySummary = stats.companies.reduce((summary, owned) => {
+    const definition = COMPANY_DEFINITIONS.find(company => company.id === owned.id);
+    if (!definition) return summary;
+    const requiredEmployees = getCompanyRequiredEmployees(definition, owned.level);
+    const gross = owned.employees >= requiredEmployees
+      ? Math.floor(getCompanyProjectedGrossRevenue(definition, owned.level, owned.strategy, stats.produtividade, stats.unlockedMechanics.produtividade) * retirementCompanyMultiplier * (1 + artifactEffects.companyRevenueBonus + conglomerateRevenueBonus))
+      : 0;
+    const costs = Math.floor(getCompanyMaintenance(definition, owned.level) * (1 - artifactEffects.companyMaintenanceDiscount) * (1 - artifactEffects.companyOperatingCostDiscount)) + Math.floor(owned.employees * definition.salaryPerEmployee * (1 - artifactEffects.companyOperatingCostDiscount));
+    summary.gross += gross;
+    summary.costs += costs;
+    if (gross > 0) summary.operating += 1;
+    return summary;
+  }, { gross: 0, costs: 0, operating: 0 });
   const equippedTitleName = TITLES_LIST.find(title => title.id === stats.equippedTitle)?.name ?? stats.equippedTitle;
 
   if (isBootstrapping) {
@@ -1323,15 +1614,17 @@ const App: React.FC = () => {
         {/* Linha 1: cards sempre visíveis */}
         <section className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-3">
           <StatCard label="Saldo" value={`R$ ${stats.saldo.toFixed(0)}`} icon="💰" color="bg-emerald-500" />
-          <StatCard label="Salário" value={`R$ ${Math.floor(stats.salario * (1 + (stats.roomUpgrades?.escritorio ?? 0) * 0.05)).toLocaleString('pt-BR')}`} icon="💼" color="bg-primary" />
+          <StatCard label="Salário" value={`R$ ${Math.floor(stats.salario * (1 + (stats.roomUpgrades?.escritorio ?? 0) * 0.05) * retirementSalaryMultiplier).toLocaleString('pt-BR')}`} icon="💼" color="bg-primary" />
           <div className={stats.comida <= 3 ? 'animate-pulse' : ''}>
             <StatCard label="Comida" value={`${stats.comida}`} icon="🍞" color="bg-emerald-500" />
           </div>
           <div className={(stats.lenha <= 3 && stats.mes >= 10) ? 'animate-pulse' : ''}>
             <StatCard label="Lenha" value={`${stats.lenha}`} icon="🪵" color="bg-primary" />
           </div>
-          <StatCard label="Dívidas" value={`R$ ${stats.contasEmAtraso.toFixed(0)}`} icon="🧾" color="bg-rose-500"
-            subLabel={`Juros: ${currentInterestRate.toFixed(1)}%`} />
+          <div className="col-span-2 md:col-span-1">
+            <StatCard label="Dívidas" value={`R$ ${stats.contasEmAtraso.toFixed(0)}`} icon="🧾" color="bg-rose-500"
+              subLabel={`Juros: ${currentInterestRate.toFixed(1)}%`} />
+          </div>
         </section>
 
         {/* Linha 2: mecânicas desbloqueadas ao longo do tempo */}
@@ -1348,7 +1641,7 @@ const App: React.FC = () => {
                 <div className={hl('felicidade')}><StatCard label="Humor" value={stats.humor} icon={humorIcons[stats.humor]} color="bg-violet-500" /></div>
               )}
               {stats.unlockedMechanics?.produtividade && (
-                <div className={hl('produtividade')}><StatCard label="Produtividade" value={stats.produtividade} icon={produtividadeIcons[stats.produtividade]} color={produtividadeColors[stats.produtividade]} /></div>
+                <div className={`${hl('produtividade')} ${count === 3 ? 'col-span-2 md:col-span-1' : ''}`}><StatCard label="Produtividade" value={stats.produtividade} icon={produtividadeIcons[stats.produtividade]} color={produtividadeColors[stats.produtividade]} /></div>
               )}
             </section>
           );
@@ -1376,7 +1669,7 @@ const App: React.FC = () => {
                     onClick={() => setIsInventoryModalOpen(true)}
                     className="flex-1 sm:flex-none px-4 py-2 sm:px-6 sm:py-2.5 bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl text-[10px] font-bold uppercase shadow-lg tracking-widest transition-all hover:scale-105 active:scale-95"
                   >
-                    🎒 Títulos
+                    🎒 Coleção
                   </button>
 
                   <button
@@ -1437,8 +1730,34 @@ const App: React.FC = () => {
                 <button onClick={() => setIsWoodModalOpen(true)} className="group flex flex-col items-center justify-center p-8 rounded-3xl border-2 border-primary/5 dark:border-primary/20 bg-primary/5 dark:bg-primary/10 hover:border-primary text-primary dark:text-primary transition-all shadow-sm">
                   <div className="w-16 h-16 bg-primary text-white rounded-2xl flex items-center justify-center mb-5 shadow-xl text-3xl group-hover:scale-110 transition-transform">🪵</div>
                   <span className="font-bold text-lg uppercase tracking-tight">Comprar Lenha</span>
-                  <p className="text-[10px] mt-2 text-slate-500 dark:text-slate-400 font-bold uppercase tracking-widest text-primary">R$ {WOOD_PRICE}</p>
+                  <p className="text-[10px] mt-2 text-slate-500 dark:text-slate-400 font-bold uppercase tracking-widest text-primary">R$ {currentWoodPrice.toFixed(0)}</p>
                 </button>
+
+                {artifactsUnlocked && <>
+                <button
+                  onClick={() => {
+                    if (!isCompanyUnlocked) return;
+                    setCompanyTab(stats.companies.length > 0 ? 'mine' : 'store');
+                    setIsCompanyModalOpen(true);
+                  }}
+                  disabled={!isCompanyUnlocked}
+                  className={`group flex flex-col items-center justify-center p-8 rounded-3xl border-2 transition-all shadow-sm ${isCompanyUnlocked ? 'border-amber-100 dark:border-amber-900/50 bg-amber-50/30 dark:bg-amber-900/10 hover:border-amber-500 text-amber-700 dark:text-amber-400' : 'border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 opacity-55 cursor-not-allowed'}`}
+                >
+                  <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mb-5 shadow-xl text-3xl transition-transform group-hover:scale-110 ${isCompanyUnlocked ? 'bg-gradient-to-br from-amber-400 to-orange-600 text-white' : 'bg-slate-200 dark:bg-slate-800 grayscale'}`}>{isCompanyUnlocked ? '🏢' : '🔒'}</div>
+                  <span className="font-bold text-lg uppercase tracking-tight">Empresas</span>
+                  <p className="text-[10px] mt-2 text-slate-500 dark:text-slate-400 font-bold uppercase tracking-widest">{stats.companies.length} adquirida{stats.companies.length !== 1 ? 's' : ''}</p>
+                </button>
+
+                <button
+                  onClick={() => setIsArtifactBoxModalOpen(true)}
+                  className={`group relative flex flex-col items-center justify-center p-8 rounded-3xl border-2 transition-all shadow-sm ${artifactsUnlocked ? 'border-violet-100 dark:border-violet-900/50 bg-violet-50/30 dark:bg-violet-900/10 hover:border-violet-500 text-violet-700 dark:text-violet-300' : 'border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-slate-500'}`}
+                >
+                  {totalArtifactBoxes > 0 && <span className="absolute right-5 top-5 rounded-full bg-amber-400 px-2.5 py-1 text-[9px] font-black text-slate-950 shadow-lg">{totalArtifactBoxes}</span>}
+                  <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mb-5 shadow-xl text-3xl transition-transform group-hover:scale-110 ${artifactsUnlocked ? 'bg-gradient-to-br from-violet-500 to-fuchsia-700 text-white' : 'bg-slate-200 dark:bg-slate-800 grayscale'}`}>{artifactsUnlocked ? '📦' : '🔒'}</div>
+                  <span className="font-bold text-lg uppercase tracking-tight">Comprar Caixas</span>
+                  <p className="text-[10px] mt-2 text-slate-500 dark:text-slate-400 font-bold uppercase tracking-widest">{artifactsUnlocked ? 'Artefatos e raridades' : 'Libera após a 1ª aposentadoria'}</p>
+                </button>
+                </>}
               </div>
 
               <div className="mt-10 space-y-3">
@@ -1525,25 +1844,34 @@ const App: React.FC = () => {
         </main>
       </div>
 
-      {/* Modal Inventário de Títulos */}
+      {/* Modal Coleção: Títulos e Artefatos */}
       {isInventoryModalOpen && (
         <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-300">
-          <div className="bg-white dark:bg-slate-900 rounded-[2.5rem] shadow-2xl w-full max-w-2xl overflow-hidden border border-slate-200 dark:border-slate-800 animate-in zoom-in-95 duration-300 relative">
+          <div className="bg-white dark:bg-slate-900 rounded-[2.5rem] shadow-2xl w-full max-w-4xl overflow-hidden border border-slate-200 dark:border-slate-800 animate-in zoom-in-95 duration-300 relative">
             <UniversalCloseButton onClick={() => setIsInventoryModalOpen(false)} />
-            <div className="p-8 bg-primary text-white">
-              <h2 className="text-3xl font-bold uppercase tracking-tighter">Sala de Troféus</h2>
-              <p className="text-xs font-bold opacity-80 uppercase tracking-widest">Conquistas e Títulos de Carreira</p>
+            <div className="p-8 bg-gradient-to-br from-primary via-indigo-700 to-violet-900 text-white">
+              <h2 className="text-3xl font-bold uppercase tracking-tighter">Coleção</h2>
+              <p className="text-xs font-bold opacity-80 uppercase tracking-widest">Títulos e itens especiais da sua jornada</p>
+              <div className="mt-6 flex max-w-sm gap-2 rounded-2xl bg-black/20 p-1.5">
+                <button onClick={() => setInventoryTab('titles')} className={`flex-1 rounded-xl px-4 py-2.5 text-[10px] font-black uppercase tracking-widest transition-all ${inventoryTab === 'titles' ? 'bg-white text-primary shadow-lg' : 'text-white/70 hover:text-white'}`}>🏆 Títulos</button>
+                <button onClick={() => setInventoryTab('artifacts')} className={`relative flex-1 rounded-xl px-4 py-2.5 text-[10px] font-black uppercase tracking-widest transition-all ${inventoryTab === 'artifacts' ? 'bg-white text-violet-700 shadow-lg' : 'text-white/70 hover:text-white'}`}>
+                  ✨ Artefatos
+                  {totalArtifactBoxes > 0 && <span className="absolute -right-1 -top-2 rounded-full bg-amber-400 px-2 py-0.5 text-[8px] text-slate-950">{totalArtifactBoxes}</span>}
+                </button>
+              </div>
             </div>
-            <div className="p-6 md:p-8 max-h-[60vh] overflow-y-auto space-y-4">
-              {TITLES_LIST.map(title => {
+            <div className="p-6 md:p-8 max-h-[68vh] overflow-y-auto">
+              {inventoryTab === 'titles' ? (
+                <div className="space-y-4">
+                {TITLES_LIST.map(title => {
                 const isUnlocked = stats.unlockedTitles.includes(title.id);
                 const isEquipped = stats.equippedTitle === title.id;
 
                 return (
-                  <div key={title.id} className={`p-5 rounded-2xl border-2 transition-all flex items-center justify-between ${isUnlocked ? 'bg-white dark:bg-slate-800 border-primary/20 dark:border-primary/40' : 'bg-slate-50 dark:bg-slate-900 border-slate-100 dark:border-slate-800'}`}>
-                    <div className="flex-1">
-                      <div className="flex items-center gap-3 mb-1">
-                        <h4 className={`text-xl ${getTitleStyle(title.name)}`}>
+                  <div key={title.id} className={`p-5 rounded-2xl border-2 transition-all flex flex-col items-stretch gap-4 sm:flex-row sm:items-center sm:justify-between ${isUnlocked ? 'bg-white dark:bg-slate-800 border-primary/20 dark:border-primary/40' : 'bg-slate-50 dark:bg-slate-900 border-slate-100 dark:border-slate-800'}`}>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-1">
+                        <h4 className={`max-w-full break-words text-lg sm:text-xl ${getTitleStyle(title.name)}`}>
                           {title.name}
                         </h4>
                         <span className={`text-[8px] px-2 py-0.5 rounded-full font-bold uppercase tracking-widest ${
@@ -1560,16 +1888,189 @@ const App: React.FC = () => {
                     {isUnlocked ? (
                       <button 
                         onClick={() => handleEquipTitle(title.id, isEquipped)}
-                        className={`px-6 py-3 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all ${isEquipped ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-300 hover:bg-primary hover:text-white'}`}
+                        className={`w-full px-6 py-3 sm:w-auto rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all ${isEquipped ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-300 hover:bg-primary hover:text-white'}`}
                       >
                         {isEquipped ? 'Equipado' : 'Equipar'}
                       </button>
                     ) : (
-                      <div className="px-6 py-3 text-[10px] font-black text-slate-300 uppercase tracking-widest">Bloqueado</div>
+                      <div className="w-full px-3 py-2 text-left text-[10px] font-black text-slate-300 uppercase tracking-widest sm:w-auto sm:px-6 sm:py-3 sm:text-center">Bloqueado</div>
                     )}
                   </div>
                 );
               })}
+                </div>
+              ) : !artifactsUnlocked ? (
+                <div className="py-10 text-center">
+                  <div className="mx-auto flex h-24 w-24 items-center justify-center rounded-[2rem] bg-slate-100 text-5xl grayscale dark:bg-slate-800">🔒</div>
+                  <h3 className="mt-6 text-2xl font-black uppercase tracking-tight text-slate-800 dark:text-white">Artefatos bloqueados</h3>
+                  <p className="mx-auto mt-3 max-w-md text-sm font-bold leading-relaxed text-slate-500 dark:text-slate-400">Complete sua primeira aposentadoria para liberar caixas, descobrir artefatos e equipar até quatro vantagens.</p>
+                  <div className="mx-auto mt-6 max-w-sm rounded-2xl border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-500/20 dark:bg-emerald-500/10">
+                    <p className="text-[9px] font-black uppercase tracking-widest text-emerald-600">Progresso até a primeira aposentadoria</p>
+                    <div className="mt-3 h-3 overflow-hidden rounded-full bg-emerald-100 dark:bg-slate-800"><div className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-teal-600" style={{ width: `${retirementProgress}%` }} /></div>
+                    <p className="mt-2 text-xs font-black text-emerald-700 dark:text-emerald-300">{retirementProgress.toFixed(1)}% de R$ 10.000.000</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  <section className="overflow-hidden rounded-[2rem] border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-amber-50 p-5 dark:border-violet-500/20 dark:from-violet-950/40 dark:via-slate-900 dark:to-amber-950/20">
+                    <div className="flex flex-wrap items-center justify-between gap-4">
+                      <div>
+                        <p className="text-[9px] font-black uppercase tracking-[0.2em] text-violet-500">Artefatos equipados</p>
+                        <h3 className="mt-1 text-xl font-black text-slate-900 dark:text-white">{stats.equippedArtifacts.length} de {MAX_EQUIPPED_ARTIFACTS} espaços usados</h3>
+                      </div>
+                    </div>
+                    <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                      {Array.from({ length: MAX_EQUIPPED_ARTIFACTS }, (_, index) => {
+                        const artifactId = stats.equippedArtifacts[index];
+                        const artifact = ARTIFACT_DEFINITIONS.find(item => item.id === artifactId);
+                        const level = artifact ? stats.artifactLevels[artifact.id] ?? 0 : 0;
+                        return artifact ? (
+                          <button key={artifact.id} onClick={() => handleToggleArtifact(artifact.id)} className={`rounded-2xl border bg-gradient-to-br ${getArtifactCardStyle(artifact)} p-3 text-white shadow-lg transition-all hover:-translate-y-0.5 active:scale-95`}>
+                            <span className={`mx-auto flex h-12 w-12 items-center justify-center rounded-xl text-3xl ${getArtifactIconStyle(artifact.rarity)}`}><ArtifactIcon artifact={artifact} /></span>
+                            <p className="mt-2 truncate text-[9px] font-black uppercase">{artifact.name}</p>
+                            {artifact.rarity !== 'Divinity' && <p className="text-[8px] font-bold opacity-80">Nível {level}</p>}
+                          </button>
+                        ) : (
+                          <div key={`empty-${index}`} className="flex min-h-24 flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-200 bg-white/50 text-slate-300 dark:border-slate-700 dark:bg-white/5 dark:text-slate-600">
+                            <span className="text-2xl">＋</span><span className="mt-1 text-[8px] font-black uppercase">Vazio</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </section>
+
+                  <section>
+                    <div className="mb-4 flex items-end justify-between"><div><p className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-400">Inventário</p><h3 className="text-xl font-black text-slate-900 dark:text-white">Seus artefatos</h3></div><p className="text-[9px] font-bold text-slate-400">Evolutivos: até nível {MAX_ARTIFACT_LEVEL}</p></div>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      {ARTIFACT_DEFINITIONS.filter(artifact => (stats.artifactLevels[artifact.id] ?? 0) > 0).map(artifact => {
+                        const level = stats.artifactLevels[artifact.id] ?? 0;
+                        const owned = level > 0;
+                        const equipped = stats.equippedArtifacts.includes(artifact.id);
+                        return (
+                          <div key={artifact.id} className={`relative overflow-hidden rounded-[1.75rem] border-2 p-4 transition-all ${owned ? getArtifactCardStyle(artifact) : 'border-slate-200 bg-slate-50 opacity-60 dark:border-slate-800 dark:bg-slate-950'}`}>
+                            <div className="flex items-start gap-4">
+                              <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl text-3xl shadow-lg ${getArtifactIconStyle(artifact.rarity)}`}><ArtifactIcon artifact={artifact} /></div>
+                              <div className="min-w-0 flex-1"><div className="flex items-center justify-between gap-2"><h4 className="truncate text-sm font-black text-slate-900 dark:text-white">{owned ? artifact.name : 'Não descoberto'}</h4>{owned && artifact.rarity !== 'Divinity' && <span className="text-[8px] font-black uppercase text-slate-400">Nv. {level}</span>}</div><p className="mt-1 text-[9px] font-black uppercase tracking-widest text-slate-400">{artifact.rarity}</p>{owned && <p className="mt-2 text-xs font-bold text-slate-600 dark:text-slate-300">{describeArtifactEffect(artifact, level)}</p>}</div>
+                            </div>
+                            {owned && <>{artifact.rarity !== 'Divinity' && <div className="mt-4 flex gap-1">{Array.from({ length: MAX_ARTIFACT_LEVEL }, (_, index) => <span key={index} className={`h-1.5 flex-1 rounded-full ${index < level ? 'bg-violet-500' : 'bg-slate-200 dark:bg-slate-700'}`} />)}</div>}<button onClick={() => handleToggleArtifact(artifact.id)} disabled={!equipped && stats.equippedArtifacts.length >= MAX_EQUIPPED_ARTIFACTS} className={`mt-4 w-full rounded-xl py-2.5 text-[9px] font-black uppercase tracking-widest transition-all active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 ${equipped ? 'bg-emerald-500 text-white' : 'bg-slate-900 text-white dark:bg-white dark:text-slate-900'}`}>{equipped ? '✓ Equipado · remover' : stats.equippedArtifacts.length >= MAX_EQUIPPED_ARTIFACTS ? 'Troque um espaço primeiro' : 'Equipar'}</button></>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </section>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Loja de Caixas de Artefatos */}
+      {isArtifactBoxModalOpen && (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-950/90 p-3 backdrop-blur-xl animate-in fade-in duration-300">
+          <div className="relative flex max-h-[94vh] w-full max-w-5xl flex-col overflow-hidden rounded-[2.5rem] border border-white/10 bg-slate-50 shadow-2xl dark:bg-[#080d1a]">
+            <UniversalCloseButton onClick={() => { stopAutoOpening(); setIsArtifactBoxModalOpen(false); }} />
+            <div className="shrink-0 bg-gradient-to-br from-violet-700 via-fuchsia-700 to-slate-950 p-7 pr-20 text-white sm:p-9">
+              <p className="text-[9px] font-black uppercase tracking-[0.3em] text-violet-200">Artefatos</p>
+              <h2 className="mt-1 text-3xl font-black uppercase tracking-tighter">Loja de Caixas</h2>
+              <p className="mt-2 text-xs font-bold text-white/70">Escolha a caixa, confira as chances e veja exatamente o que pode encontrar.</p>
+            </div>
+            {openingArtifactBox && (() => {
+              const openingBox = ARTIFACT_BOX_DEFINITIONS.find(box => box.id === openingArtifactBox);
+              const reward = lastArtifactReward ? ARTIFACT_DEFINITIONS.find(item => item.id === lastArtifactReward.id) : null;
+              if (!openingBox) return null;
+              return (
+                <div className="absolute inset-0 z-40 flex items-center justify-center bg-slate-950/95 p-6 text-center text-white backdrop-blur-xl">
+                  {!reward ? (
+                    <div><div className="artifact-box-opening text-8xl drop-shadow-[0_20px_35px_rgba(139,92,246,0.55)]">{openingBox.emoji}</div><p className="mt-8 text-xs font-black uppercase tracking-[0.35em] text-violet-300">Abrindo {openingBox.name}...</p></div>
+                  ) : (
+                    <div className="artifact-reward-reveal max-w-sm"><div className={`mx-auto flex h-36 w-36 items-center justify-center rounded-[2.5rem] text-7xl shadow-2xl ${getArtifactIconStyle(reward.rarity)}`}><ArtifactIcon artifact={reward} /></div><p className="mt-7 text-[10px] font-black uppercase tracking-[0.3em] text-amber-300">{lastArtifactReward?.upgraded ? 'Artefato fortalecido!' : 'Novo artefato!'}</p><h3 className="mt-2 text-3xl font-black">{reward.name}</h3><p className={`mt-2 text-sm font-black uppercase tracking-widest ${reward.rarity === 'Lendário' ? 'artifact-chance-rgb' : reward.rarity === 'Divinity' ? 'text-sky-200' : 'text-white/70'}`}>{reward.rarity}</p></div>
+                  )}
+                </div>
+              );
+            })()}
+            <div className="overflow-y-auto p-5 sm:p-7">
+              {!artifactsUnlocked ? (
+                <div className="mx-auto max-w-lg py-12 text-center">
+                  <div className="mx-auto flex h-24 w-24 items-center justify-center rounded-[2rem] bg-slate-200 text-5xl grayscale dark:bg-slate-800">🔒</div>
+                  <h3 className="mt-6 text-2xl font-black uppercase text-slate-900 dark:text-white">Loja bloqueada</h3>
+                  <p className="mt-3 text-sm font-bold leading-relaxed text-slate-500">As caixas e os artefatos são liberados quando você completa a primeira aposentadoria.</p>
+                  <button onClick={() => { setIsArtifactBoxModalOpen(false); setShowRetirementConfirm(false); setIsRetirementModalOpen(true); }} className="mt-6 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-600 px-6 py-3 text-[10px] font-black uppercase tracking-widest text-white shadow-lg">Ver aposentadoria</button>
+                </div>
+              ) : (
+                <div className="space-y-7">
+                  <section>
+                    <div className="mb-4"><p className="text-[9px] font-black uppercase tracking-widest text-violet-500">Passo 1</p><h3 className="text-xl font-black text-slate-900 dark:text-white">Escolha uma caixa</h3></div>
+                    <div className="grid gap-5">
+                      {ARTIFACT_BOX_DEFINITIONS.map(box => {
+                        const amount = stats.artifactBoxes?.[box.id] ?? 0;
+                        const price = getDiscountedUiPrice(getArtifactBoxPrice(box.id, retirementCount));
+                        const canUseStored = amount > 0;
+                        const canBuy = stats.saldo >= price;
+                        return (
+                          <div key={box.id} className="overflow-hidden rounded-[2rem] border-2 border-violet-500/70 bg-white shadow-lg shadow-violet-950/10 dark:bg-slate-900">
+                            <div className={`grid gap-5 bg-gradient-to-br ${box.style} p-5 text-white md:grid-cols-[220px_1fr] md:p-6`}>
+                              <div className="relative"><div className="flex items-center justify-between md:block"><span className="text-5xl">{box.emoji}</span></div><h4 className="mt-4 text-2xl font-black">{box.name}</h4></div>
+                              <div className="rounded-2xl border border-white/15 bg-black/15 p-3 backdrop-blur-sm">
+                                <div className="mb-3 flex items-center justify-between"><p className="text-[8px] font-black uppercase tracking-[0.22em] text-white/65">Possíveis artefatos</p>{box.id === 'elite' && <span className="text-xs font-black tracking-[0.25em] text-sky-200 drop-shadow-[0_0_8px_rgba(186,230,253,0.9)]">???</span>}</div>
+                                <div className="grid grid-cols-4 gap-2 sm:grid-cols-6">
+                                  {ARTIFACT_DEFINITIONS.filter(artifact => box.artifactIds.includes(artifact.id) && artifact.rarity !== 'Divinity').sort((a, b) => ['Comum', 'Raro', 'Épico', 'Lendário'].indexOf(a.rarity) - ['Comum', 'Raro', 'Épico', 'Lendário'].indexOf(b.rarity)).map(artifact => {
+                                    const rarityCount = ARTIFACT_DEFINITIONS.filter(item => box.artifactIds.includes(item.id) && item.rarity === artifact.rarity).length;
+                                    const individualChance = box.chances[artifact.rarity] / rarityCount;
+                                    const owned = (stats.artifactLevels?.[artifact.id] ?? 0) > 0;
+                                    const chanceColor = artifact.rarity === 'Comum' ? 'text-white' : artifact.rarity === 'Raro' ? 'text-sky-300' : artifact.rarity === 'Épico' ? 'text-violet-300' : 'artifact-chance-rgb';
+                                    return <div key={artifact.id} className={`min-w-0 rounded-xl px-1.5 py-3 text-center transition-all ${owned ? 'bg-white/25 ring-1 ring-white/35' : 'bg-white/10'}`}><div className={`${owned ? 'drop-shadow-lg' : 'artifact-silhouette'} mx-auto text-3xl sm:text-4xl`}>{artifact.emoji}</div><p className={`mt-1.5 text-[11px] font-black sm:text-xs ${chanceColor}`}>{individualChance.toFixed(individualChance < 10 ? 2 : 1)}%</p></div>;
+                                  })}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="grid gap-2 p-4 sm:grid-cols-2 sm:p-5">
+                              <button onClick={() => handleBuyAndOpenArtifactBox(box.id)} disabled={openingArtifactBox !== null || (!canUseStored && !canBuy)} className={`w-full rounded-2xl bg-gradient-to-r ${box.style} px-4 py-4 text-[10px] font-black uppercase tracking-widest text-white shadow-lg transition-all hover:scale-[1.01] active:scale-95 disabled:cursor-not-allowed disabled:grayscale disabled:opacity-35`}>
+                                {canUseStored ? `Abrir ${box.name} disponível` : <>Comprar e abrir<br/><span className="text-[9px] opacity-80">R$ {price.toLocaleString('pt-BR')}</span></>}
+                              </button>
+                              <button onClick={() => handleAutoOpenArtifactBox(box.id)} disabled={(autoOpeningBox !== null && autoOpeningBox !== box.id) || (!canUseStored && !canBuy)} className={`w-full rounded-2xl border-2 px-4 py-4 text-[10px] font-black uppercase tracking-widest transition-all active:scale-95 disabled:cursor-not-allowed disabled:opacity-35 ${autoOpeningBox === box.id ? 'border-rose-400 bg-rose-500 text-white' : 'border-violet-300 bg-violet-50 text-violet-700 dark:border-violet-700 dark:bg-violet-950/40 dark:text-violet-200'}`}>
+                                {autoOpeningBox === box.id ? 'Parar abertura automática' : 'Abrir automaticamente'}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </section>
+
+                  {lastArtifactReward && (() => {
+                    const reward = ARTIFACT_DEFINITIONS.find(item => item.id === lastArtifactReward.id);
+                    if (!reward) return null;
+                    const level = stats.artifactLevels[reward.id] ?? 1;
+                    return <div className={`rounded-[2rem] border bg-gradient-to-r ${getArtifactCardStyle(reward)} p-1 shadow-xl`}><div className="flex items-center gap-4 rounded-[1.75rem] bg-slate-950 p-5 text-white"><span className={`flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl text-5xl ${getArtifactIconStyle(reward.rarity)}`}><ArtifactIcon artifact={reward} /></span><div><p className="text-[9px] font-black uppercase tracking-widest text-amber-300">{lastArtifactReward.upgraded ? 'Artefato fortalecido!' : 'Novo artefato!'}</p><h4 className="text-xl font-black">{reward.name}{reward.rarity !== 'Divinity' ? ` · Nível ${level}` : ''}</h4><p className={`mt-1 text-xs font-black uppercase tracking-widest ${reward.rarity === 'Lendário' ? 'artifact-chance-rgb' : reward.rarity === 'Divinity' ? 'text-sky-200' : 'text-slate-300'}`}>{reward.rarity}</p></div></div></div>;
+                  })()}
+
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Índice completo de Artefatos */}
+      {isArtifactIndexOpen && (
+        <div className="fixed inset-0 z-[155] flex items-center justify-center bg-black/85 p-3 backdrop-blur-lg animate-in fade-in duration-300">
+          <div className="relative flex max-h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-[2.5rem] border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+            <UniversalCloseButton onClick={() => setIsArtifactIndexOpen(false)} />
+            <div className="shrink-0 bg-gradient-to-br from-slate-900 via-violet-950 to-fuchsia-950 p-7 pr-20 text-white sm:p-9"><p className="text-[9px] font-black uppercase tracking-[0.3em] text-violet-300">Enciclopédia</p><h2 className="mt-1 text-3xl font-black uppercase tracking-tighter">Índice de Artefatos</h2><p className="mt-2 text-xs font-bold text-white/65">Todos os artefatos, suas raridades e vantagens.</p></div>
+            <div className="overflow-y-auto p-5 sm:p-7">
+              <div className="mb-5 flex flex-wrap gap-2">{(['Comum', 'Raro', 'Épico', 'Lendário'] as const).map(rarity => <span key={rarity} className={`rounded-full bg-gradient-to-r ${ARTIFACT_RARITY_STYLE[rarity]} px-3 py-1.5 text-[9px] font-black uppercase text-white`}>{rarity} · {ARTIFACT_DEFINITIONS.filter(item => item.rarity === rarity).length}</span>)}</div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                {ARTIFACT_DEFINITIONS
+                  .filter(artifact => artifact.rarity !== 'Divinity' || (stats.artifactLevels?.[artifact.id] ?? 0) > 0)
+                  .sort((a, b) => ['Comum', 'Raro', 'Épico', 'Lendário', 'Divinity'].indexOf(a.rarity) - ['Comum', 'Raro', 'Épico', 'Lendário', 'Divinity'].indexOf(b.rarity))
+                  .map(artifact => {
+                  const level = stats.artifactLevels?.[artifact.id] ?? 0;
+                  const discovered = level > 0;
+                  const equipped = stats.equippedArtifacts.includes(artifact.id);
+                  return <div key={artifact.id} className={`relative overflow-hidden rounded-[1.75rem] border-2 bg-slate-50 p-4 dark:bg-slate-950/60 ${discovered ? getArtifactCardStyle(artifact) : 'border-slate-200 dark:border-slate-800'}`}><div className="flex items-start gap-4"><div className={`flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl text-3xl shadow-lg ${discovered ? getArtifactIconStyle(artifact.rarity) : 'artifact-silhouette bg-slate-700 text-slate-950 grayscale'}`}><ArtifactIcon artifact={artifact} /></div><div className="min-w-0 flex-1"><div className="flex items-center justify-between gap-2"><h3 className="truncate text-sm font-black text-slate-900 dark:text-white">{discovered ? artifact.name : 'Não descoberto'}</h3>{discovered && equipped && <span className="rounded-full bg-emerald-500 px-2 py-1 text-[7px] font-black uppercase text-white">Equipado</span>}</div><p className="mt-1 text-[8px] font-black uppercase tracking-widest text-slate-400">{discovered ? `${artifact.rarity}${artifact.rarity !== 'Divinity' ? ` · Nível ${level}` : ''}` : 'Não descoberto'}</p><p className="mt-2 text-xs font-bold text-slate-600 dark:text-slate-300">{discovered ? artifact.description : 'Não descoberto'}</p>{discovered && <p className="mt-2 text-[10px] font-black text-violet-600 dark:text-violet-300">{artifact.rarity === 'Divinity' ? 'Efeito' : `No nível ${level}`}: {describeArtifactEffect(artifact, level)}</p>}</div></div></div>;
+                })}
+              </div>
             </div>
           </div>
         </div>
@@ -1827,9 +2328,59 @@ const App: React.FC = () => {
               <h2 className="text-2xl font-bold mt-4 uppercase tracking-tighter text-slate-800 dark:text-slate-100">Supermercado</h2>
               <p className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-widest mt-1 italic">R$ {getCurrentFoodPrice().toFixed(0)} / unidade</p>
             </div>
-            <input type="number" value={foodQuantityInput} onChange={e => setFoodQuantityInput(e.target.value)} className="w-full p-6 bg-slate-50 dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 rounded-2xl mb-6 text-center font-bold text-4xl text-slate-800 dark:text-slate-100 outline-none focus:border-emerald-500" min="1" />
+            <input type="text" inputMode="numeric" value={foodQuantityInput} onChange={e => handleFoodQuantityChange(e.target.value)} className="w-full p-6 bg-slate-50 dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 rounded-2xl mb-6 text-center font-bold text-4xl text-slate-800 dark:text-slate-100 outline-none focus:border-emerald-500" />
             <div className="flex gap-3">
               <button onClick={handleBuyFood} className="w-full py-4 bg-emerald-600 dark:bg-emerald-700 text-white font-bold rounded-2xl uppercase text-[10px] tracking-widest shadow-lg">Comprar Agora</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isDevModeEnabled && !isDevPanelOpen && (
+        <button
+          onClick={openDevPanel}
+          className="fixed bottom-5 left-5 z-[90] rounded-full border border-fuchsia-400/40 bg-slate-950 px-4 py-3 text-[10px] font-black uppercase tracking-[0.2em] text-fuchsia-300 shadow-2xl hover:scale-105 active:scale-95 transition-all"
+        >
+          DEV
+        </button>
+      )}
+
+      {isDevPanelOpen && (
+        <div className="fixed inset-0 z-[450] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
+          <div className="relative w-full max-w-md overflow-hidden rounded-[2.5rem] border border-fuchsia-500/40 bg-slate-950 text-white shadow-[0_0_60px_rgba(217,70,239,0.2)]">
+            <UniversalCloseButton onClick={() => setIsDevPanelOpen(false)} />
+            <div className="border-b border-white/10 bg-gradient-to-br from-fuchsia-950 via-slate-950 to-violet-950 p-8 text-center">
+              <span className="text-5xl">🛠️</span>
+              <h2 className="mt-3 text-2xl font-black uppercase tracking-tighter">Painel DEV</h2>
+              <p className="mt-2 text-[9px] font-bold uppercase tracking-[0.2em] text-fuchsia-300">Somente ambiente local · fora do ranking</p>
+            </div>
+            <div className="grid grid-cols-2 gap-3 p-6">
+              {[
+                { label: 'Saldo', value: devSaldoInput, setter: setDevSaldoInput, step: '0.01' },
+                { label: 'Comida', value: devComidaInput, setter: setDevComidaInput, step: '1' },
+                { label: 'Lenha', value: devLenhaInput, setter: setDevLenhaInput, step: '1' },
+                { label: 'Mês', value: devMesInput, setter: setDevMesInput, step: '1' },
+              ].map(field => (
+                <label key={field.label} className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                  <span className="mb-2 block text-[9px] font-black uppercase tracking-widest text-slate-400">{field.label}</span>
+                  <input
+                    type="number"
+                    step={field.step}
+                    value={field.value}
+                    onChange={event => field.setter(event.target.value)}
+                    className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-3 text-center text-lg font-black text-white outline-none focus:border-fuchsia-400"
+                  />
+                </label>
+              ))}
+            </div>
+            <div className="px-6 pb-6">
+              <button
+                onClick={handleApplyDevStats}
+                disabled={isApplyingDevStats}
+                className="w-full rounded-2xl bg-gradient-to-r from-fuchsia-600 to-violet-600 py-4 text-xs font-black uppercase tracking-widest shadow-xl disabled:opacity-50"
+              >
+                {isApplyingDevStats ? 'Aplicando...' : 'Aplicar alterações'}
+              </button>
             </div>
           </div>
         </div>
@@ -1843,7 +2394,7 @@ const App: React.FC = () => {
             <div className="text-center mb-6">
               <span className="text-5xl">🪵</span>
               <h2 className="text-2xl font-bold mt-4 uppercase tracking-tighter text-slate-800 dark:text-slate-100">Comprar Lenha</h2>
-              <p className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-widest mt-1 italic">R$ {WOOD_PRICE.toFixed(0)} / unidade</p>
+              <p className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-widest mt-1 italic">R$ {currentWoodPrice.toFixed(0)} / unidade</p>
             </div>
             <input type="number" value={woodQuantityInput} onChange={e => setWoodQuantityInput(e.target.value)} className="w-full p-6 bg-slate-50 dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 rounded-2xl mb-6 text-center font-bold text-4xl text-slate-800 dark:text-slate-100 outline-none focus:border-primary" min="1" />
             <div className="flex gap-3">
@@ -1903,10 +2454,11 @@ const App: React.FC = () => {
                  <div key="savings" className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
                     <div className="p-8 bg-gradient-to-br from-violet-50 to-indigo-50 dark:from-violet-900/10 dark:to-indigo-900/10 rounded-[2rem] border border-violet-100 dark:border-violet-800 shadow-inner">
                         <p className="text-[10px] font-bold uppercase text-violet-600 dark:text-violet-400 tracking-[0.2em] mb-2">Rendimento Real Mensal</p>
-                        <p className="text-4xl font-bold text-slate-800 dark:text-slate-100 tracking-tighter">{((SAVINGS_YIELD + (stats.roomUpgrades.sala * 0.001)) * 100).toFixed(2)}% <span className="text-sm text-slate-400 font-bold">a.m.</span></p>
+                        <p className="text-4xl font-bold text-slate-800 dark:text-slate-100 tracking-tighter">{((SAVINGS_YIELD + (stats.roomUpgrades.sala * 0.001) + artifactEffects.savingsYieldBonus) * 100).toFixed(2)}% <span className="text-sm text-slate-400 font-bold">a.m.</span></p>
                         <div className="mt-4 pt-4 border-t border-violet-100/50">
                           <p className="text-[10px] font-bold uppercase text-violet-500/60 tracking-widest">Saldo Atual na Poupança</p>
                           <p className="text-2xl font-bold text-violet-700 dark:text-violet-300 tracking-tight">R$ {stats.poupanca.toFixed(0)}</p>
+                          <p className="mt-1 text-[9px] font-black uppercase tracking-widest text-violet-400">Limite: R$ 1.000.000.000</p>
                         </div>
                     </div>
                     <div className="space-y-3">
@@ -2096,6 +2648,218 @@ const App: React.FC = () => {
         </div>
       )}
 
+      {/* Modal Empresas */}
+      {isCompanyModalOpen && (
+        <div className="fixed inset-0 z-[130] flex items-center justify-center p-2 sm:p-5 bg-slate-950/85 backdrop-blur-lg animate-in fade-in duration-300">
+          <div className="bg-slate-50 dark:bg-[#08101f] rounded-[2rem] sm:rounded-[2.5rem] shadow-[0_32px_100px_rgba(0,0,0,0.55)] w-full max-w-4xl max-h-[94vh] overflow-hidden border border-white/10 flex flex-col relative">
+            <UniversalCloseButton onClick={() => setIsCompanyModalOpen(false)} />
+            <div className="relative overflow-hidden p-6 sm:p-8 bg-slate-950 text-white shrink-0">
+              <div className="pointer-events-none absolute -top-24 -left-12 h-56 w-56 rounded-full bg-amber-500/30 blur-3xl" />
+              <div className="pointer-events-none absolute -bottom-28 right-8 h-56 w-56 rounded-full bg-violet-600/30 blur-3xl" />
+              <div className="relative flex items-center gap-4 pr-12">
+                <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-400 to-orange-600 text-3xl shadow-lg shadow-orange-950/40">🏢</span>
+                <div className="min-w-0">
+                  <p className="text-[9px] font-black uppercase tracking-[0.3em] text-amber-400">Seu império</p>
+                  <h2 className="text-2xl sm:text-3xl font-black tracking-tight">Minhas Empresas</h2>
+                  <p className="text-[10px] sm:text-xs font-bold text-slate-400">Construa equipes, escolha sua estratégia e cresça.</p>
+                </div>
+              </div>
+              <div className="relative grid grid-cols-2 gap-3 mt-6">
+                <div className="rounded-2xl bg-white/[0.07] border border-white/10 px-4 py-3 backdrop-blur-sm">
+                  <div className="flex items-center gap-2">
+                    <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.9)]" />
+                    <p className="text-[8px] font-black uppercase tracking-widest text-slate-400">Em operação</p>
+                  </div>
+                  <p className="text-lg sm:text-xl font-black mt-1">{companySummary.operating}<span className="text-sm text-slate-500">/{stats.companies.length}</span></p>
+                </div>
+                <div className="rounded-2xl bg-gradient-to-br from-emerald-500/15 to-emerald-400/5 border border-emerald-400/20 px-4 py-3 backdrop-blur-sm">
+                  <p className="text-[8px] font-black uppercase tracking-widest text-emerald-300/80">Resultado mensal</p>
+                  <p className="text-lg sm:text-xl font-black mt-1 text-emerald-300">{companySummary.gross - companySummary.costs >= 0 ? '+' : '-'}R$ {Math.abs(companySummary.gross - companySummary.costs).toLocaleString('pt-BR')}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-1.5 p-2.5 bg-white dark:bg-[#0b1527] border-b border-slate-200 dark:border-white/5 shrink-0">
+              <button onClick={() => setCompanyTab('mine')} className={`py-3 rounded-xl text-[9px] sm:text-[10px] font-black uppercase tracking-wider transition-all ${companyTab === 'mine' ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-950 shadow-lg' : 'text-slate-400 hover:bg-slate-100 dark:hover:bg-white/5'}`}>Minha gestão <span className="ml-1 opacity-60">{stats.companies.length}</span></button>
+              <button onClick={() => setCompanyTab('store')} className={`py-3 rounded-xl text-[9px] sm:text-[10px] font-black uppercase tracking-wider transition-all ${companyTab === 'store' ? 'bg-gradient-to-r from-amber-500 to-orange-600 text-white shadow-lg shadow-orange-900/20' : 'text-slate-400 hover:bg-slate-100 dark:hover:bg-white/5'}`}>Comprar empresas</button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 sm:p-7 bg-slate-100/70 dark:bg-[#08101f]">
+              {companyTab === 'store' ? (
+                <>
+                  <div className="mb-5 p-4 rounded-2xl bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-blue-700 dark:text-blue-300 mb-3">Como funciona</p>
+                    <div className="grid grid-cols-3 gap-2 text-center">
+                      {[['1', 'Compre'], ['2', 'Contrate'], ['3', 'Lucre todo mês']].map(([step, label]) => (
+                        <div key={step} className="rounded-xl bg-white dark:bg-slate-900 p-2 border border-blue-100 dark:border-blue-900">
+                          <span className="mx-auto flex w-6 h-6 items-center justify-center rounded-full bg-blue-600 text-white text-[10px] font-black">{step}</span>
+                          <p className="mt-1 text-[8px] sm:text-[9px] font-black uppercase text-slate-600 dark:text-slate-300">{label}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    {COMPANY_DEFINITIONS.filter(definition => !stats.companies.some(company => company.id === definition.id)).map(definition => {
+                      const requiredEmployees = getCompanyRequiredEmployees(definition, 1);
+                      const purchaseCost = getDiscountedUiPrice(definition.purchaseCost);
+                      const hiringCost = getDiscountedUiPrice(Math.floor(getEmployeeHiringCost(definition) * requiredEmployees * (1 - artifactEffects.hiringCostDiscount)));
+                      const estimatedProfit = Math.floor(getCompanyProjectedGrossRevenue(definition, 1, 'balanced', stats.produtividade, stats.unlockedMechanics.produtividade) * retirementCompanyMultiplier * (1 + artifactEffects.companyRevenueBonus + conglomerateRevenueBonus)) - Math.floor(getCompanyMaintenance(definition, 1) * (1 - artifactEffects.companyMaintenanceDiscount) * (1 - artifactEffects.companyOperatingCostDiscount)) - Math.floor(requiredEmployees * definition.salaryPerEmployee * (1 - artifactEffects.companyOperatingCostDiscount));
+                      const missingMoney = Math.max(0, purchaseCost - stats.saldo);
+                      return (
+                        <div key={definition.id} className="flex h-full flex-col rounded-3xl border border-slate-200 dark:border-white/10 bg-white dark:bg-[#0e192c] p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-xl">
+                          <div className="flex items-center gap-4">
+                            <div className="w-14 h-14 shrink-0 rounded-2xl bg-gradient-to-br from-amber-400 to-orange-600 text-3xl flex items-center justify-center shadow-lg">{definition.emoji}</div>
+                            <div className="min-w-0 flex-1">
+                              <h3 className="text-lg font-black text-slate-800 dark:text-slate-100">{definition.name}</h3>
+                              <p className="text-[10px] text-slate-400 font-bold">{definition.description}</p>
+                            </div>
+                          </div>
+                          <div className="mt-4 grid grid-cols-2 gap-2">
+                            <div className="rounded-xl bg-slate-50 dark:bg-slate-800/60 p-3">
+                              <p className="text-[7px] font-black uppercase tracking-widest text-slate-400">Preço</p>
+                              <p className="text-sm font-black text-slate-800 dark:text-slate-100">R$ {purchaseCost.toLocaleString('pt-BR')}</p>
+                            </div>
+                            <div className="rounded-xl bg-emerald-50 dark:bg-emerald-900/20 p-3">
+                              <p className="text-[7px] font-black uppercase tracking-widest text-emerald-500">Lucro estimado</p>
+                              <p className="text-sm font-black text-emerald-600 dark:text-emerald-400">+R$ {estimatedProfit.toLocaleString('pt-BR')}/mês</p>
+                            </div>
+                          </div>
+                          <button onClick={() => handleBuyCompany(definition.id)} disabled={gameOver || missingMoney > 0} className="mt-auto w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-600 text-white text-[10px] font-black uppercase tracking-widest shadow-lg shadow-orange-900/20 disabled:opacity-40 disabled:grayscale active:scale-95 transition-all">
+                            {missingMoney > 0 ? `Faltam R$ ${missingMoney.toLocaleString('pt-BR')}` : 'Comprar empresa'}
+                          </button>
+                          <p className="mt-2 text-center text-[8px] font-bold text-slate-400">Depois da compra, monte a equipe por R$ {hiringCost.toLocaleString('pt-BR')}.</p>
+                        </div>
+                      );
+                    })}
+                    {COMPANY_DEFINITIONS.every(definition => stats.companies.some(company => company.id === definition.id)) && (
+                      <div className="py-12 text-center"><span className="text-5xl">🏆</span><p className="mt-3 text-sm font-black text-slate-700 dark:text-slate-200">Você já comprou todas as empresas!</p></div>
+                    )}
+                  </div>
+                </>
+              ) : stats.companies.length === 0 ? (
+                <div className="py-14 text-center">
+                  <span className="text-6xl">🏪</span>
+                  <h3 className="mt-4 text-xl font-black text-slate-800 dark:text-slate-100">Você ainda não tem empresas</h3>
+                  <p className="mt-2 text-sm text-slate-400">Comece comprando uma Lanchonete.</p>
+                  <button onClick={() => setCompanyTab('store')} className="mt-5 px-6 py-3 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-600 text-white text-[10px] font-black uppercase tracking-widest">Ver empresas disponíveis</button>
+                </div>
+              ) : (
+                <div className="space-y-5">
+                  {COMPANY_DEFINITIONS.filter(definition => stats.companies.some(company => company.id === definition.id)).map(definition => {
+                  const owned = stats.companies.find(company => company.id === definition.id);
+                  const level = owned?.level ?? 1;
+                  const employees = owned?.employees ?? 0;
+                  const requiredEmployees = getCompanyRequiredEmployees(definition, level);
+                  const strategy = owned?.strategy ?? 'balanced';
+                  const grossRevenue = Math.floor(getCompanyProjectedGrossRevenue(definition, level, strategy, stats.produtividade, stats.unlockedMechanics.produtividade) * retirementCompanyMultiplier * (1 + artifactEffects.companyRevenueBonus + conglomerateRevenueBonus));
+                  const riskChance = getCompanyRiskChance(strategy, stats.produtividade, stats.unlockedMechanics.produtividade) * (1 - artifactEffects.companyRiskReduction);
+                  const maintenance = getDiscountedUiPrice(Math.floor(getCompanyMaintenance(definition, level) * (1 - artifactEffects.companyMaintenanceDiscount) * (1 - artifactEffects.companyOperatingCostDiscount)));
+                  const payroll = Math.floor(employees * definition.salaryPerEmployee * (1 - artifactEffects.companyOperatingCostDiscount));
+                  const operating = !!owned && employees >= requiredEmployees;
+                  const displayedGross = operating ? grossRevenue : 0;
+                  const netIncome = displayedGross - maintenance - payroll;
+                  const missingEmployees = Math.max(0, requiredEmployees - employees);
+                  const hiringCost = getDiscountedUiPrice(Math.floor(getEmployeeHiringCost(definition) * missingEmployees * (1 - artifactEffects.hiringCostDiscount)));
+                  const baseUpgradeCost = owned ? getCompanyUpgradeCost(definition, level) : null;
+                  const upgradeCost = baseUpgradeCost === null ? null : getDiscountedUiPrice(Math.floor(baseUpgradeCost * (1 - artifactEffects.companyUpgradeDiscount)));
+
+                  return (
+                    <div key={definition.id} className={`overflow-hidden rounded-[1.75rem] border bg-white dark:bg-[#0e192c] shadow-sm transition-all ${operating ? 'border-emerald-200/80 dark:border-emerald-500/25' : 'border-amber-300 dark:border-amber-500/30'}`}>
+                      <div className="flex flex-col gap-4 border-b border-slate-100 p-5 dark:border-white/5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+                        <div className="flex min-w-0 items-center gap-4">
+                          <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-400 via-orange-500 to-rose-500 text-3xl shadow-lg shadow-orange-900/20">{definition.emoji}</div>
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h3 className="text-xl font-black leading-tight text-slate-900 dark:text-white">{definition.name}</h3>
+                              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[8px] font-black uppercase tracking-wider text-slate-600 dark:bg-white/10 dark:text-slate-300">Nível {level}</span>
+                            </div>
+                            <p className="mt-1 text-[10px] font-bold text-slate-400">{definition.description}</p>
+                          </div>
+                        </div>
+                        <div className={`min-w-[165px] rounded-2xl px-4 py-3 sm:text-right ${netIncome >= 0 ? 'bg-emerald-50 dark:bg-emerald-500/10' : 'bg-rose-50 dark:bg-rose-500/10'}`}>
+                          <p className={`text-[8px] font-black uppercase tracking-widest ${netIncome >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>{operating ? 'Lucro projetado' : 'Custo mensal'}</p>
+                          <p className={`mt-0.5 text-xl font-black ${netIncome >= 0 ? 'text-emerald-700 dark:text-emerald-300' : 'text-rose-700 dark:text-rose-300'}`}>{netIncome >= 0 ? '+' : '-'}R$ {Math.abs(netIncome).toLocaleString('pt-BR')}</p>
+                        </div>
+                      </div>
+
+                      <div className="grid gap-5 p-4 sm:p-6 md:grid-cols-[0.85fr_1.15fr]">
+                        <div className="space-y-3">
+                          <div className={`rounded-2xl border p-4 ${operating ? 'border-emerald-200 bg-emerald-50/70 dark:border-emerald-500/20 dark:bg-emerald-500/5' : 'border-amber-200 bg-amber-50 dark:border-amber-500/20 dark:bg-amber-500/5'}`}>
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="flex items-center gap-2">
+                                <span className={`h-2.5 w-2.5 rounded-full ${operating ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.7)]' : 'bg-amber-500'}`} />
+                                <span className={`text-[9px] font-black uppercase tracking-wider ${operating ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-300'}`}>{operating ? 'Operando normalmente' : 'Equipe incompleta'}</span>
+                              </div>
+                              <span className="text-[10px] font-black text-slate-600 dark:text-slate-300">👥 {employees}/{requiredEmployees}</span>
+                            </div>
+                            <div className="mt-3 h-2 overflow-hidden rounded-full bg-white dark:bg-slate-950/60">
+                              <div className={`h-full rounded-full transition-all ${operating ? 'bg-gradient-to-r from-emerald-400 to-emerald-600' : 'bg-gradient-to-r from-amber-400 to-orange-500'}`} style={{ width: `${Math.min(100, (employees / requiredEmployees) * 100)}%` }} />
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-center dark:border-white/5 dark:bg-slate-950/30">
+                            <div><p className="text-[7px] font-black uppercase tracking-wider text-slate-400">Receita</p><p className="mt-1 text-[10px] font-black text-emerald-600">R$ {displayedGross.toLocaleString('pt-BR')}</p></div>
+                            <div className="border-l border-slate-200 dark:border-white/10"><p className="text-[7px] font-black uppercase tracking-wider text-slate-400">Gastos mensais</p><p className="mt-1 text-[10px] font-black text-rose-500">R$ {(payroll + maintenance).toLocaleString('pt-BR')}</p></div>
+                          </div>
+
+                          {!operating ? (
+                            <button onClick={() => handleHireEmployees(definition.id, missingEmployees)} disabled={missingEmployees === 0 || stats.saldo < hiringCost || gameOver} className="w-full rounded-2xl bg-gradient-to-r from-emerald-500 to-emerald-600 py-4 text-[10px] font-black uppercase tracking-wider text-white shadow-lg shadow-emerald-900/20 transition-all active:scale-[0.98] disabled:opacity-35">
+                              {stats.saldo < hiringCost ? `Faltam R$ ${(hiringCost - stats.saldo).toLocaleString('pt-BR')} para montar a equipe` : `Montar equipe • R$ ${hiringCost.toLocaleString('pt-BR')}`}
+                            </button>
+                          ) : (
+                            <button onClick={() => handleUpgradeCompany(definition.id)} disabled={upgradeCost === null || stats.saldo < (upgradeCost ?? 0) || gameOver} className="w-full rounded-2xl bg-slate-900 py-4 text-[10px] font-black uppercase tracking-wider text-white shadow-lg transition-all active:scale-[0.98] disabled:opacity-35 dark:bg-white dark:text-slate-950">
+                              {upgradeCost === null ? 'Empresa no nível máximo' : stats.saldo < upgradeCost ? `Melhoria: R$ ${upgradeCost.toLocaleString('pt-BR')}` : `Melhorar para o nível ${level + 1} • R$ ${upgradeCost.toLocaleString('pt-BR')}`}
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3 dark:border-white/5 dark:bg-slate-950/25 sm:p-4">
+                          <div className="mb-3 flex items-end justify-between gap-3">
+                            <div>
+                              <p className="text-[9px] font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">Estratégia de gestão</p>
+                              <p className="mt-0.5 text-[9px] font-bold text-slate-400">Escolha entre segurança e rendimento.</p>
+                            </div>
+                            <span className="hidden rounded-full bg-white px-2.5 py-1 text-[8px] font-black text-slate-500 shadow-sm dark:bg-white/10 dark:text-slate-300 sm:block">Risco mensal</span>
+                          </div>
+                          <div className="grid grid-cols-3 gap-2">
+                            {COMPANY_STRATEGIES.map(strategyOption => {
+                              const optionGross = Math.floor(getCompanyProjectedGrossRevenue(definition, level, strategyOption.id, stats.produtividade, stats.unlockedMechanics.produtividade) * retirementCompanyMultiplier * (1 + artifactEffects.companyRevenueBonus + conglomerateRevenueBonus));
+                              const optionNet = optionGross - maintenance - payroll;
+                              const optionRisk = getCompanyRiskChance(strategyOption.id, stats.produtividade, stats.unlockedMechanics.produtividade) * (1 - artifactEffects.companyRiskReduction);
+                              const selected = strategy === strategyOption.id;
+                              const color = strategyOption.id === 'safe'
+                                ? selected ? 'border-blue-500 bg-blue-600 text-white shadow-blue-900/25' : 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-500/20 dark:bg-blue-500/5 dark:text-blue-300'
+                                : strategyOption.id === 'aggressive'
+                                  ? selected ? 'border-rose-500 bg-rose-600 text-white shadow-rose-900/25' : 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/20 dark:bg-rose-500/5 dark:text-rose-300'
+                                  : selected ? 'border-amber-500 bg-gradient-to-br from-amber-500 to-orange-500 text-white shadow-orange-900/25' : 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/5 dark:text-amber-300';
+                              return (
+                                <button key={strategyOption.id} aria-pressed={selected} onClick={() => handleSetCompanyStrategy(definition.id, strategyOption.id)} disabled={gameOver} className={`relative rounded-2xl border p-2.5 text-center shadow-lg transition-all hover:-translate-y-0.5 active:scale-95 ${color} ${selected ? '' : 'shadow-none opacity-75 hover:opacity-100'}`}>
+                                  {selected && <span className="absolute right-2 top-2 text-[9px]">✓</span>}
+                                  <span className={`mx-auto flex h-8 w-8 items-center justify-center rounded-xl text-lg ${selected ? 'bg-white/20' : 'bg-white/70 dark:bg-white/10'}`}>{strategyOption.emoji}</span>
+                                  <p className="mt-2 text-[8px] font-black uppercase tracking-wide">{strategyOption.name}</p>
+                                  <p className="mt-1 text-[10px] font-black">{optionNet >= 0 ? '+' : '-'}R$ {Math.abs(optionNet).toLocaleString('pt-BR')}</p>
+                                  <p className={`mx-auto mt-1.5 w-fit rounded-full px-2 py-0.5 text-[7px] font-black uppercase ${selected ? 'bg-black/15 text-white' : 'bg-white/80 dark:bg-white/10'}`}>{(optionRisk * 100).toFixed(1)}% risco</p>
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <div className="mt-3 rounded-xl bg-white px-3 py-2.5 text-center shadow-sm dark:bg-white/5">
+                            <p className="text-[10px] font-black text-slate-700 dark:text-slate-200">{getCompanyStrategy(strategy).description}</p>
+                            <p className="mt-0.5 text-[8px] font-bold text-slate-400">O risco é a chance de um problema acontecer no próximo mês.</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+                </div>
+              )}
+              <p className="mt-5 text-center text-[9px] font-bold uppercase tracking-widest text-slate-400">Os valores são calculados automaticamente quando você avança o mês.</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Relatório Mensal Detalhado */}
       {showReport && reportData && (
         <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-2xl animate-in fade-in duration-300">
@@ -2130,33 +2894,45 @@ const App: React.FC = () => {
                     Finanças do Período
                     <div className="flex-1 h-px bg-slate-100 dark:bg-slate-800" />
                   </h3>
-                  <div className="space-y-1.5">
-                    <div className="flex justify-between items-center py-1.5 border-b border-slate-50 dark:border-slate-800/50">
-                        <span className="text-[16px] font-bold text-slate-500 uppercase tracking-tight">Salário Base</span>
-                        <span className="text-[20px] font-black text-emerald-600">R$ {reportData.salarioBase.toFixed(0)}</span>
+                  <div className="space-y-2">
+                    <div className="overflow-hidden rounded-2xl border border-slate-100 bg-slate-50/70 dark:border-slate-800 dark:bg-slate-950/30">
+                      <button onClick={() => setExpandedReportSections(current => ({ ...current, salary: !current.salary }))} className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left">
+                        <span className="flex items-center gap-3 text-[15px] font-black uppercase tracking-tight text-slate-600 dark:text-slate-300"><span className={`transition-transform ${expandedReportSections.salary ? 'rotate-90' : ''}`}>›</span> Salário</span>
+                        <span className={`text-[19px] font-black ${reportData.salarioRecebido >= 0 ? 'text-emerald-600' : 'text-rose-500'}`}>{reportData.salarioRecebido >= 0 ? '+' : '-'} R$ {Math.abs(reportData.salarioRecebido).toFixed(0)}</span>
+                      </button>
+                      {expandedReportSections.salary && <div className="space-y-2 border-t border-slate-100 px-4 py-3 text-xs font-bold dark:border-slate-800">
+                        <div className="flex justify-between text-slate-500"><span>Salário recebido</span><span className="text-emerald-600">R$ {reportData.salarioBase.toFixed(0)}</span></div>
+                        {reportData.estacao === 'Verão' && <div className="flex justify-between text-amber-500"><span>Efeito Verão (-30%)</span><span>já aplicado</span></div>}
+                        {reportData.bonusEvento !== 0 && <div className="flex justify-between text-slate-500"><span>Extras do mês</span><span className={reportData.bonusEvento > 0 ? 'text-emerald-600' : 'text-rose-500'}>{reportData.bonusEvento > 0 ? '+' : '-'} R$ {Math.abs(reportData.bonusEvento).toFixed(0)}</span></div>}
+                        {reportData.rendimentoPoupanca > 0 && <div className="flex justify-between text-slate-500"><span>Rendimento da poupança</span><span className="text-violet-500">+ R$ {reportData.rendimentoPoupanca.toFixed(0)}</span></div>}
+                      </div>}
                     </div>
-                    {reportData.estacao === 'Verão' && (
-                      <div className="flex justify-between items-center py-1.5 border-b border-slate-50 dark:border-slate-800/50">
-                        <span className="text-[13px] font-bold text-amber-500 uppercase tracking-tight">☀️ Efeito Verão (-30%)</span>
-                        <span className="text-[14px] font-black text-amber-500">- R$ {(reportData.salarioBase / 0.7 * 0.3).toFixed(0)}</span>
-                      </div>
-                    )}
-                    {reportData.bonusEvento !== 0 && (
-                      <div className="flex justify-between items-center py-1.5 border-b border-slate-50 dark:border-slate-800/50">
-                        <span className="text-[16px] font-bold text-slate-500 uppercase tracking-tight">Extras</span>
-                        <span className={`text-[35px]s font-black ${reportData.bonusEvento > 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
-                          {reportData.bonusEvento > 0 ? '+' : ''} R$ {reportData.bonusEvento.toFixed(0)}
-                        </span>
-                      </div>
-                    )}
-                    <div className="flex justify-between items-center py-1.5 border-b border-slate-50 dark:border-slate-800/50">
-                        <span className="text-[16px] font-bold text-slate-500 uppercase tracking-tight">Novos Gastos</span>
-                        <span className="text-[20px] font-black text-rose-500">- R$ {reportData.contasAdicionadas.toFixed(0)}</span>
+
+                    <div className="overflow-hidden rounded-2xl border border-slate-100 bg-slate-50/70 dark:border-slate-800 dark:bg-slate-950/30">
+                      <button onClick={() => setExpandedReportSections(current => ({ ...current, expenses: !current.expenses }))} className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left">
+                        <span className="flex items-center gap-3 text-[15px] font-black uppercase tracking-tight text-slate-600 dark:text-slate-300"><span className={`transition-transform ${expandedReportSections.expenses ? 'rotate-90' : ''}`}>›</span> Gastos</span>
+                        <span className="text-[19px] font-black text-rose-500">- R$ {(reportData.contasAdicionadas + reportData.jurosAplicados).toFixed(0)}</span>
+                      </button>
+                      {expandedReportSections.expenses && <div className="space-y-2 border-t border-slate-100 px-4 py-3 text-xs font-bold dark:border-slate-800">
+                        <div className="flex justify-between text-slate-500"><span>Novos gastos</span><span className="text-rose-500">- R$ {reportData.contasAdicionadas.toFixed(0)}</span></div>
+                        {reportData.jurosAplicados > 0 && <div className="flex justify-between text-slate-500"><span>Juros bancários ({reportData.taxaJuros.toFixed(1)}%)</span><span className="text-rose-500">- R$ {reportData.jurosAplicados.toFixed(0)}</span></div>}
+                      </div>}
                     </div>
-                    {reportData.jurosAplicados > 0 && (
-                      <div className="flex justify-between items-center py-1.5 border-b border-slate-50 dark:border-slate-800/50">
-                        <span className="text-[15px] font-bold text-slate-500 uppercase tracking-tight">Juros Bancários ({reportData.taxaJuros.toFixed(1)}%)</span>
-                        <span className="text-[16px] font-black text-rose-600">- R$ {reportData.jurosAplicados.toFixed(0)}</span>
+
+                    <div className="overflow-hidden rounded-2xl border border-slate-100 bg-slate-50/70 dark:border-slate-800 dark:bg-slate-950/30">
+                      <button onClick={() => setExpandedReportSections(current => ({ ...current, companies: !current.companies }))} className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left">
+                        <span className="flex items-center gap-3 text-[15px] font-black uppercase tracking-tight text-slate-600 dark:text-slate-300"><span className={`transition-transform ${expandedReportSections.companies ? 'rotate-90' : ''}`}>›</span> Empresas</span>
+                        <span className={`text-[19px] font-black ${reportData.companyNetIncome >= 0 ? 'text-emerald-600' : 'text-rose-500'}`}>{reportData.companyNetIncome >= 0 ? '+' : '-'} R$ {Math.abs(reportData.companyNetIncome).toFixed(0)}</span>
+                      </button>
+                      {expandedReportSections.companies && <div className="space-y-2 border-t border-slate-100 px-4 py-3 text-xs font-bold dark:border-slate-800">
+                        <div className="flex justify-between text-slate-500"><span>Receita ({reportData.operatingCompanies} operando)</span><span className="text-emerald-600">+ R$ {reportData.companyGrossRevenue.toFixed(0)}</span></div>
+                        <div className="flex justify-between text-slate-500"><span>Funcionários e manutenção</span><span className="text-rose-500">- R$ {reportData.companyOperatingCosts.toFixed(0)}</span></div>
+                      </div>}
+                    </div>
+                    {reportData.companyIncidents.length > 0 && (
+                      <div className="space-y-2 rounded-2xl border-2 border-rose-300 bg-rose-50 p-4 dark:border-rose-700 dark:bg-rose-950/40">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-rose-600 dark:text-rose-300">⚠️ Problemas nas empresas</p>
+                        {reportData.companyIncidents.map((incident, index) => <p key={`${incident}-${index}`} className="text-[11px] font-bold leading-snug text-rose-700 dark:text-rose-200">• {incident}</p>)}
                       </div>
                     )}
                   </div>
@@ -2274,7 +3050,7 @@ const App: React.FC = () => {
       {/* Modal Status */}
       {isStatusModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-300">
-          <div className="bg-white dark:bg-slate-900 p-8 rounded-[2.5rem] w-full max-w-sm border border-slate-200 dark:border-slate-800 shadow-2xl relative">
+          <div className="bg-white dark:bg-slate-900 p-8 rounded-[2.5rem] w-full max-w-sm max-h-[90vh] overflow-y-auto border border-slate-200 dark:border-slate-800 shadow-2xl relative">
             <UniversalCloseButton onClick={() => setIsStatusModalOpen(false)} />
             <div className="text-center mb-6">
               <span className="text-5xl">📊</span>
@@ -2283,12 +3059,13 @@ const App: React.FC = () => {
             </div>
             <div className="space-y-2">
               {[
-                { icon: '💼', label: 'Salário', value: `R$ ${Math.floor(stats.salario * (1 + (stats.roomUpgrades.escritorio * 0.05))).toLocaleString('pt-BR')}` },
+                { icon: '💼', label: 'Salário', value: `R$ ${Math.floor(stats.salario * (1 + (stats.roomUpgrades.escritorio * 0.05)) * retirementSalaryMultiplier * (1 + artifactEffects.salaryBonus)).toLocaleString('pt-BR')}` },
                 { icon: '🏦', label: 'Investimentos', value: `R$ ${stats.poupanca.toFixed(0)}` },
-                { icon: '📅', label: 'Meses Jogados', value: `${stats.mes} mês${stats.mes !== 1 ? 'es' : ''}` },
+                { icon: '📅', label: 'Meses Jogados', value: `${stats.mes} ${stats.mes === 1 ? 'mês' : 'meses'}` },
                 { icon: '⭐', label: 'Nível de Carreira', value: `Nível ${stats.nivel}` },
                 { icon: '🎓', label: 'Currículo', value: `Nível ${stats.nivelCurriculo}` },
                 { icon: '🎒', label: 'Títulos', value: `${stats.unlockedTitles.length} desbloqueado${stats.unlockedTitles.length !== 1 ? 's' : ''}` },
+                { icon: '🏖️', label: 'Aposentadorias', value: `${retirementCount}` },
               ].map(item => (
                 <div key={item.label} className="flex items-center justify-between px-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800">
                   <div className="flex items-center gap-3">
@@ -2300,12 +3077,144 @@ const App: React.FC = () => {
               ))}
             </div>
             <button
+              onClick={() => {
+                setIsStatusModalOpen(false);
+                setIsArtifactIndexOpen(true);
+              }}
+              className="mt-5 w-full rounded-2xl border-2 border-violet-200 bg-violet-50 p-4 text-violet-700 shadow-sm transition-all hover:scale-[1.02] hover:border-violet-400 active:scale-95 dark:border-violet-500/20 dark:bg-violet-500/10 dark:text-violet-300"
+            >
+              <span className="flex items-center justify-center gap-2 text-sm font-black uppercase tracking-wider">✨ Índice de Artefatos</span>
+              <span className="mt-1 block text-[9px] font-bold uppercase tracking-widest opacity-70">Ver itens, raridades e vantagens</span>
+            </button>
+            <button
               onClick={handleOpenLeaderboard}
-              className="mt-5 w-full p-4 rounded-2xl bg-gradient-to-r from-yellow-300 via-amber-500 to-yellow-700 text-white shadow-lg shadow-amber-500/20 transition-all hover:scale-[1.02] active:scale-95"
+              className="mt-3 w-full p-4 rounded-2xl bg-gradient-to-r from-yellow-300 via-amber-500 to-yellow-700 text-white shadow-lg shadow-amber-500/20 transition-all hover:scale-[1.02] active:scale-95"
             >
               <span className="flex items-center justify-center gap-2 text-sm font-black uppercase tracking-wider">🏆 Ranking Global</span>
               <span className="block mt-1 text-[9px] font-bold uppercase tracking-widest text-white/80">10 jogadores mais ricos</span>
             </button>
+            <button
+              onClick={() => {
+                setIsStatusModalOpen(false);
+                setShowRetirementConfirm(false);
+                setIsRetirementModalOpen(true);
+              }}
+              className={`mt-3 w-full p-4 rounded-2xl border-2 transition-all hover:scale-[1.02] active:scale-95 ${canRetire ? 'border-emerald-400 bg-gradient-to-r from-cyan-500 via-emerald-500 to-teal-600 text-white shadow-lg shadow-emerald-500/20' : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 text-slate-700 dark:text-slate-200'}`}
+            >
+              <span className="flex items-center justify-center gap-2 text-sm font-black uppercase tracking-wider">🏖️ Aposentadoria</span>
+              <span className={`block mt-1 text-[9px] font-bold uppercase tracking-widest ${canRetire ? 'text-white/85' : 'text-slate-400'}`}>
+                {retirementCount >= 10 ? 'Limite de 10 rebirths atingido' : canRetire ? 'Você já pode se aposentar' : `Próxima: R$ ${retirementRequirement.toLocaleString('pt-BR')}`}
+              </span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Aposentadoria */}
+      {isRetirementModalOpen && (
+        <div className="fixed inset-0 z-[145] flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-xl animate-in fade-in duration-300">
+          <div className="relative w-full max-w-lg max-h-[92vh] overflow-y-auto rounded-[2.5rem] border border-emerald-400/30 bg-white dark:bg-[#071522] shadow-2xl shadow-emerald-950/40 animate-in zoom-in-95 duration-300">
+            <UniversalCloseButton onClick={() => { setIsRetirementModalOpen(false); setShowRetirementConfirm(false); }} />
+
+            <div className="overflow-hidden rounded-t-[2.5rem] bg-gradient-to-br from-cyan-500 via-emerald-500 to-teal-700 p-8 text-white">
+              <div className="flex items-center gap-4 pr-12">
+                <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-white/20 text-4xl shadow-xl backdrop-blur-sm">🏖️</div>
+                <div>
+                  <p className="text-[9px] font-black uppercase tracking-[0.25em] text-white/75">Rebirth permanente</p>
+                  <h2 className="text-3xl font-black uppercase tracking-tighter">Aposentadoria</h2>
+                  <p className="mt-1 text-xs font-bold text-white/85">Recomece mais forte a cada nova jornada.</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-5 p-6 sm:p-8">
+              {!showRetirementConfirm ? (
+                <>
+                  <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5 dark:border-white/10 dark:bg-white/5">
+                    <div className="flex items-end justify-between gap-4">
+                      <div>
+                        <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">Aposentadorias concluídas</p>
+                        <p className="mt-1 text-3xl font-black text-slate-900 dark:text-white">{retirementCount}<span className="text-sm text-slate-400">/10</span></p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">Meta atual</p>
+                        <p className="mt-1 text-lg font-black text-emerald-600 dark:text-emerald-400">R$ {retirementRequirement.toLocaleString('pt-BR')}</p>
+                      </div>
+                    </div>
+                    <div className="mt-4 h-3 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+                      <div className="h-full rounded-full bg-gradient-to-r from-cyan-400 via-emerald-500 to-teal-600 transition-all duration-700" style={{ width: `${retirementProgress}%` }} />
+                    </div>
+                    <div className="mt-2 flex justify-between text-[9px] font-bold text-slate-400">
+                      <span>R$ {Math.max(0, stats.saldo).toLocaleString('pt-BR')}</span>
+                      <span>{retirementProgress.toFixed(1)}%</span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="mb-3 text-[9px] font-black uppercase tracking-[0.2em] text-slate-400">Benefícios permanentes atuais</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 dark:border-blue-500/20 dark:bg-blue-500/10">
+                        <span className="text-2xl">💼</span>
+                        <p className="mt-2 text-[8px] font-black uppercase tracking-widest text-blue-500">Salário mensal</p>
+                        <p className="text-xl font-black text-blue-700 dark:text-blue-300">+{retirementCount * 10}%</p>
+                      </div>
+                      <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-500/20 dark:bg-amber-500/10">
+                        <span className="text-2xl">🏢</span>
+                        <p className="mt-2 text-[8px] font-black uppercase tracking-widest text-amber-500">Receita das empresas</p>
+                        <p className="text-xl font-black text-amber-700 dark:text-amber-300">+{retirementCount * 5}%</p>
+                      </div>
+                    </div>
+                    <p className="mt-3 rounded-xl bg-emerald-50 px-4 py-3 text-center text-[10px] font-black text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">
+                      A próxima aposentadoria adiciona mais +10% ao salário e +5% às empresas.
+                    </p>
+                    {retirementCount === 0 && (
+                      <div className="mt-3 rounded-2xl border-2 border-violet-300 bg-violet-50 p-4 text-center dark:border-violet-500/30 dark:bg-violet-500/10">
+                        <p className="text-[9px] font-black uppercase tracking-widest text-violet-500">Desbloqueio do 1º rebirth</p>
+                        <p className="mt-1 text-sm font-black text-violet-800 dark:text-violet-200">🏢 Empresas e 📦 Caixas de Artefatos</p>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4 dark:border-emerald-500/20 dark:bg-emerald-500/5">
+                      <p className="text-[9px] font-black uppercase tracking-widest text-emerald-600">✓ Você mantém</p>
+                      <p className="mt-2 text-xs font-bold leading-relaxed text-slate-600 dark:text-slate-300">Todos os títulos, artefatos, caixas, seu nick e os bônus permanentes.</p>
+                    </div>
+                    <div className="rounded-2xl border border-rose-200 bg-rose-50/70 p-4 dark:border-rose-500/20 dark:bg-rose-500/5">
+                      <p className="text-[9px] font-black uppercase tracking-widest text-rose-600">✕ Você perde</p>
+                      <p className="mt-2 text-xs font-bold leading-relaxed text-slate-600 dark:text-slate-300">Dinheiro, meses, emprego, estudos, investimentos, casas, empresas e dívidas.</p>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => canRetire && setShowRetirementConfirm(true)}
+                    disabled={!canRetire || gameOver}
+                    className="w-full rounded-2xl bg-gradient-to-r from-cyan-500 via-emerald-500 to-teal-600 py-4 text-[11px] font-black uppercase tracking-[0.16em] text-white shadow-xl shadow-emerald-900/20 transition-all hover:scale-[1.01] active:scale-95 disabled:cursor-not-allowed disabled:grayscale disabled:opacity-40"
+                  >
+                    {retirementCount >= 10 ? 'Limite de 10 rebirths atingido' : canRetire ? `Aposentar e iniciar jornada ${retirementCount + 1}` : `Faltam R$ ${Math.max(0, retirementRequirement - stats.saldo).toLocaleString('pt-BR')}`}
+                  </button>
+                </>
+              ) : (
+                <div className="space-y-5 text-center">
+                  <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-rose-100 text-5xl dark:bg-rose-500/15">⚠️</div>
+                  <div>
+                    <h3 className="text-2xl font-black uppercase tracking-tight text-slate-900 dark:text-white">Confirmar aposentadoria?</h3>
+                    <p className="mt-2 text-sm font-bold leading-relaxed text-slate-500 dark:text-slate-400">Esta ação reinicia toda a sua jornada atual e não pode ser desfeita.</p>
+                  </div>
+                  <div className="rounded-2xl border-2 border-rose-300 bg-rose-50 p-4 text-left dark:border-rose-500/30 dark:bg-rose-500/10">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-rose-600">Você está trocando</p>
+                    <p className="mt-1 text-lg font-black text-slate-900 dark:text-white">R$ {stats.saldo.toLocaleString('pt-BR')} e todo o progresso atual</p>
+                    <p className="mt-2 text-xs font-bold text-slate-500 dark:text-slate-400">Em troca, receberá permanentemente +{(retirementCount + 1) * 10}% no salário e +{(retirementCount + 1) * 5}% na receita empresarial.</p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button onClick={() => setShowRetirementConfirm(false)} disabled={isRetiring} className="rounded-2xl bg-slate-100 py-4 text-[10px] font-black uppercase tracking-widest text-slate-600 transition-all active:scale-95 disabled:opacity-50 dark:bg-slate-800 dark:text-slate-300">Voltar</button>
+                    <button onClick={handleRetire} disabled={isRetiring} className="rounded-2xl bg-rose-600 py-4 text-[10px] font-black uppercase tracking-widest text-white shadow-lg shadow-rose-900/20 transition-all active:scale-95 disabled:opacity-50">
+                      {isRetiring ? 'Aposentando...' : 'Sim, recomeçar'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -2568,7 +3477,7 @@ const App: React.FC = () => {
                     {stats.doencaAtiva && (
                       <div className="mt-3 p-3 rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
                         <p className="text-[10px] font-black text-amber-700 dark:text-amber-300 uppercase tracking-widest">{stats.doencaAtiva.emoji} {stats.doencaAtiva.nome} ativa</p>
-                        <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-0.5">Tratamento: R$ {stats.doencaAtiva.custo.toFixed(0)}</p>
+                        <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-0.5">Tratamento: R$ {getLifestyleUiPrice(stats.doencaAtiva.custo).toFixed(0)}</p>
                         <button
                           onClick={handleComprarRemedio}
                           className="mt-2 w-full py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all"
@@ -2577,7 +3486,8 @@ const App: React.FC = () => {
                     )}
                   </div>
                   {ACOES_SAUDE.map(acao => {
-                    const pode = stats.saldo >= acao.custo;
+                    const price = getLifestyleUiPrice(acao.custo);
+                    const pode = stats.saldo >= price;
                     return (
                       <button
                         key={acao.id}
@@ -2589,7 +3499,7 @@ const App: React.FC = () => {
                           <span className="text-2xl">{acao.emoji}</span>
                           <div className="text-left">
                             <p className="text-sm font-bold text-slate-800 dark:text-slate-100">{acao.nome}</p>
-                            <p className="text-[10px] text-slate-400 uppercase tracking-widest">R$ {acao.custo}</p>
+                            <p className="text-[10px] text-slate-400 uppercase tracking-widest">R$ {price.toLocaleString('pt-BR')}</p>
                           </div>
                         </div>
                         <span className="text-[10px] font-black text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 px-2 py-1 rounded-lg">+{acao.ganho} saúde</span>
@@ -2610,7 +3520,8 @@ const App: React.FC = () => {
                   </div>
                   {LAZER_ATIVIDADES.map(atividade => {
                     const ganhoEfetivo = getHappinessGainScaled(atividade.happinessGain, stats.salario);
-                    const pode = stats.saldo >= atividade.custoBase;
+                    const price = getLifestyleUiPrice(atividade.custoBase);
+                    const pode = stats.saldo >= price;
                     return (
                       <button
                         key={atividade.id}
@@ -2622,7 +3533,7 @@ const App: React.FC = () => {
                           <span className="text-2xl">{atividade.emoji}</span>
                           <div className="text-left">
                             <p className="text-sm font-bold text-slate-800 dark:text-slate-100">{atividade.nome}</p>
-                            <p className="text-[10px] text-slate-400 uppercase tracking-widest">R$ {atividade.custoBase}</p>
+                            <p className="text-[10px] text-slate-400 uppercase tracking-widest">R$ {price.toLocaleString('pt-BR')}</p>
                           </div>
                         </div>
                         <span className="text-[10px] font-black text-yellow-600 dark:text-yellow-400 bg-yellow-50 dark:bg-yellow-900/20 px-2 py-1 rounded-lg">+{ganhoEfetivo} humor</span>
@@ -2647,15 +3558,15 @@ const App: React.FC = () => {
               <span className="text-6xl mb-4 animate-pulse">{pendingDisease.emoji}</span>
               <h2 className="text-2xl font-black uppercase tracking-tighter text-red-400">🤒 Você ficou doente</h2>
               <p className="text-slate-300 mt-2 font-bold">Diagnóstico: {pendingDisease.nome}</p>
-              <p className="text-red-300 mt-1 text-sm">Custo do tratamento: <strong>R$ {pendingDisease.custo.toFixed(0)}</strong></p>
+              <p className="text-red-300 mt-1 text-sm">Custo do tratamento: <strong>R$ {getLifestyleUiPrice(pendingDisease.custo).toFixed(0)}</strong></p>
             </div>
             <div className="p-6 space-y-3">
               <button
                 onClick={handleComprarRemedio}
-                disabled={stats.saldo < pendingDisease.custo}
+                disabled={stats.saldo < getLifestyleUiPrice(pendingDisease.custo)}
                 className="w-full py-4 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-2xl font-black uppercase tracking-widest text-sm active:scale-95 transition-all"
               >
-                💊 Comprar Remédio — R$ {pendingDisease.custo.toFixed(0)}
+                💊 Comprar Remédio — R$ {getLifestyleUiPrice(pendingDisease.custo).toFixed(0)}
               </button>
               <button
                 onClick={() => setPendingDisease(null)}
@@ -2663,7 +3574,7 @@ const App: React.FC = () => {
               >
                 Ignorar por enquanto
               </button>
-              {stats.saldo < pendingDisease.custo && (
+              {stats.saldo < getLifestyleUiPrice(pendingDisease.custo) && (
                 <p className="text-center text-[10px] text-rose-400 font-bold">Saldo insuficiente. A doença persistirá e piorará sua saúde.</p>
               )}
             </div>

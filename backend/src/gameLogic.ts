@@ -5,8 +5,19 @@ import {
 } from './types.js';
 import {
   BASE_FOOD_PRICE, WOOD_PRICE, SAVINGS_YIELD, GRAUS_ACADEMICOS, CURSOS,
-  ACOES_SAUDE, LAZER_ATIVIDADES, DOENCAS, CARGOS, EMPRESAS, TITLES_LIST,
+  ACOES_SAUDE, LAZER_ATIVIDADES, DOENCAS, CARGOS, EMPRESAS, GOD_REQUIRED_TITLE_IDS, createInitialStats,
 } from './constants.js';
+import {
+  COMPANY_DEFINITIONS, getCompanyMaintenance, getCompanyProjectedGrossRevenue,
+  getCompanyRequiredEmployees, getCompanyRiskChance, getCompanyStrategy, getCompanyUpgradeCost,
+  getEmployeeHiringCost,
+} from './companies.js';
+import {
+  ARTIFACT_BOX_DEFINITIONS, ARTIFACT_DEFINITIONS, MAX_ARTIFACT_LEVEL, MAX_EQUIPPED_ARTIFACTS,
+  getArtifactBoxPrice, getArtifactEffects, pickArtifact,
+} from './artifacts.js';
+
+const MAX_SAVINGS = 1_000_000_000;
 
 // ============================================================
 // HELPERS
@@ -15,6 +26,21 @@ import {
 function rand() { return Math.random(); }
 function pick<T>(arr: T[]): T { return arr[Math.floor(rand() * arr.length)]; }
 function clamp(v: number, min: number, max: number) { return Math.max(min, Math.min(max, v)); }
+
+export const RETIREMENT_BASE_REQUIREMENT = 10_000_000;
+
+export function getRetirementRequirement(retirementCount: number): number {
+  const safeCount = Math.max(0, Math.floor(retirementCount));
+  return RETIREMENT_BASE_REQUIREMENT * (2 ** safeCount);
+}
+
+function getRetirementSalaryMultiplier(stats: GameStats): number {
+  return 1 + stats.retirementCount * 0.10;
+}
+
+function getRetirementCompanyMultiplier(stats: GameStats): number {
+  return 1 + stats.retirementCount * 0.05;
+}
 
 function addEvent(events: GameEvent[], message: string, type: GameEvent['type']): void {
   events.push({ id: randomUUID(), timestamp: Date.now(), message, type });
@@ -34,7 +60,16 @@ function getCurrentFoodPrice(stats: GameStats): number {
   const interestRate = getInterestRate(stats);
   if (interestRate >= 24) price *= 2.0;
   else if (interestRate >= 17) price *= 1.4;
-  return price * (1 - stats.cursoBenefits.foodDiscount);
+  return price * (1 - Math.min(0.75, stats.cursoBenefits.foodDiscount));
+}
+
+function getDiscountedPurchasePrice(stats: GameStats, basePrice: number): number {
+  return Math.max(0, Math.floor(basePrice * (1 - getArtifactEffects(stats).allPricesDiscount)));
+}
+
+function getLifestylePrice(stats: GameStats, basePrice: number): number {
+  const wealthSurcharge = Math.min(1_000_000, Math.floor(Math.max(0, stats.saldo - 100_000) * 0.0025));
+  return getDiscountedPurchasePrice(stats, basePrice + wealthSurcharge);
 }
 
 function getInterestRate(stats: GameStats): number {
@@ -84,9 +119,10 @@ function checkTitles(stats: GameStats, events: GameEvent[]): void {
   if (stats.totalFoodBought >= 100)            unlock('Gorducho',     '100 comidas compradas!');
   if (stats.hasBoughtStock)                    unlock('Investidor',   'Primeira ação comprada!');
   if (stats.hasBoughtCrypto)                   unlock('CryptoMaster', 'Primeira cripto comprada!');
+  if (stats.companies.length >= 1)             unlock('Empresario',   'Primeira empresa comprada!');
   if (stats.nivelCurriculo >= 1)               unlock('Diplomado',    'Graduação concluída!');
   if (stats.nivelCurriculo >= 5)               unlock('Doctor',       'Toda a faculdade concluída!');
-  if (stats.saldo >= 100000)                   unlock('Magnata',      'R$ 100.000 de saldo!');
+  if (stats.saldo >= 1_000_000_000)            unlock('Magnata',      'R$ 1 bilhão de saldo!');
   if (stats.saldo >= 1000000)                  unlock('OneMillion',   'R$ 1.000.000!');
   if (stats.mes >= 100)                        unlock('CLThanos',     '100 meses de trabalho!');
   if (CURSOS.every(curso => stats.cursosCompletos.includes(curso.id))) {
@@ -94,12 +130,23 @@ function checkTitles(stats: GameStats, events: GameEvent[]): void {
   }
 
   // WinterWarrior: completou os três meses do primeiro inverno.
+  if ((stats.artifactBoxesOpened ?? 0) >= 1_000) unlock('Unboxer', '1.000 caixas abertas!');
+  if ((stats.artifactBoxesOpened ?? 0) >= 10_000) unlock('NoLife', '10.000 caixas abertas!');
+  if ((stats.retirementCount ?? 0) >= 10) unlock('ImmortalOne', 'Todos os 10 rebirths concluídos!');
+  const regularArtifacts = ARTIFACT_DEFINITIONS.filter(artifact => artifact.rarity !== 'Divinity');
+  if (regularArtifacts.every(artifact => (stats.artifactLevels[artifact.id] ?? 0) > 0)) {
+    unlock('Colecionador', 'Index de artefatos completo!');
+  }
+
   if (stats.mes >= 13) unlock('WinterWarrior', 'Sobreviveu ao inverno!');
 
-  // GøD: tem todos os outros títulos
-  const allExceptGod = TITLES_LIST.filter(t => t.id !== 'GOD').map(t => t.id);
-  if (allExceptGod.every(id => stats.unlockedTitles.includes(id))) {
+  // O GOD é dinâmico: títulos novos passam a ser requisitos e exclusivos ficam de fora.
+  if (GOD_REQUIRED_TITLE_IDS.every(id => stats.unlockedTitles.includes(id))) {
     unlock('GOD', 'Todos os títulos conquistados!');
+  } else if (stats.unlockedTitles.includes('GOD')) {
+    stats.unlockedTitles = stats.unlockedTitles.filter(title => title !== 'GOD');
+    if (stats.equippedTitle === 'GOD') stats.equippedTitle = '';
+    addEvent(events, 'O título GOD foi removido porque ainda faltam títulos obrigatórios.', 'neutral');
   }
 }
 
@@ -184,6 +231,130 @@ function updateAssetPrices(assets: GameStats['stocks']): void {
   }
 }
 
+function getDeterministicCompanyRoll(stats: GameStats, companyId: string, salt: string): number {
+  const input = `${stats.playerNick}|${stats.mes}|${companyId}|${salt}`;
+  let hash = 2166136261;
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0) / 4294967296;
+}
+
+function processCompanies(stats: GameStats, events: GameEvent[]): {
+  grossRevenue: number;
+  operatingCosts: number;
+  netIncome: number;
+  operatingCompanies: number;
+  incidents: string[];
+} {
+  let grossRevenue = 0;
+  let operatingCosts = 0;
+  let operatingCompanies = 0;
+  const incidents: string[] = [];
+  const artifactEffects = getArtifactEffects(stats);
+  const operatingCompanyCount = stats.companies.filter(company => {
+    const definition = COMPANY_DEFINITIONS.find(item => item.id === company.id);
+    return !!definition && company.employees >= getCompanyRequiredEmployees(definition, company.level);
+  }).length;
+  const conglomerateBonus = Math.min(0.20, artifactEffects.conglomerateRevenuePerCompany * operatingCompanyCount);
+
+  for (const company of stats.companies) {
+    const definition = COMPANY_DEFINITIONS.find(item => item.id === company.id);
+    if (!definition) continue;
+
+    const requiredEmployees = getCompanyRequiredEmployees(definition, company.level);
+    const maintenance = Math.floor(getCompanyMaintenance(definition, company.level) * (1 - artifactEffects.companyMaintenanceDiscount) * (1 - artifactEffects.companyOperatingCostDiscount) * (1 - artifactEffects.allPricesDiscount));
+    const payroll = Math.floor(company.employees * definition.salaryPerEmployee * (1 - artifactEffects.companyOperatingCostDiscount));
+    let incidentCost = 0;
+    let revenueMultiplier = 1;
+    let employeesLeaving = 0;
+
+    if (company.employees >= requiredEmployees) {
+      let companyGrossRevenue = getCompanyProjectedGrossRevenue(
+        definition,
+        company.level,
+        company.strategy,
+        stats.produtividade,
+        stats.unlockedMechanics.produtividade,
+      );
+      companyGrossRevenue = Math.floor(companyGrossRevenue * getRetirementCompanyMultiplier(stats));
+      companyGrossRevenue = Math.floor(companyGrossRevenue * (1 + artifactEffects.companyRevenueBonus + conglomerateBonus));
+      const incidentSeverity = getCompanyStrategy(company.strategy).incidentSeverityMultiplier;
+      const riskChance = getCompanyRiskChance(
+        company.strategy,
+        stats.produtividade,
+        stats.unlockedMechanics.produtividade,
+      ) * (1 - artifactEffects.companyRiskReduction);
+
+      if (getDeterministicCompanyRoll(stats, company.id, 'risk') < riskChance) {
+        if (getDeterministicCompanyRoll(stats, company.id, 'incident-cancel') < artifactEffects.companyIncidentCancelChance) {
+          incidents.push(`${definition.name}: Seguro Sist\u00eamico evitou um incidente.`);
+        } else {
+        const incidentType = Math.floor(getDeterministicCompanyRoll(stats, company.id, 'incident') * 8);
+        if (incidentType === 0) {
+          employeesLeaving = getDeterministicCompanyRoll(stats, company.id, 'retention') < artifactEffects.employeeRetentionChance
+            ? 0
+            : Math.max(1, Math.ceil(requiredEmployees * 0.15 * incidentSeverity));
+          if (employeesLeaving === 0) incidents.push(`${definition.name}: Manual de Reten\u00e7\u00e3o evitou demiss\u00f5es.`);
+          else {
+          incidents.push(`${definition.name}: ${employeesLeaving} funcionário(s) pediram demissão.`);
+          }
+        } else if (incidentType === 1) {
+          incidentCost = Math.floor(maintenance * 2 * incidentSeverity * (1 - artifactEffects.negativeEventCostReduction));
+          incidents.push(`${definition.name}: equipamentos quebraram e o reparo custou R$ ${incidentCost}.`);
+        } else if (incidentType === 2) {
+          incidentCost = Math.floor(companyGrossRevenue * 0.18 * incidentSeverity * (1 - artifactEffects.negativeEventCostReduction));
+          incidents.push(`${definition.name}: uma fiscalização aplicou multa de R$ ${incidentCost}.`);
+        } else if (incidentType === 3) {
+          const revenueLoss = Math.min(0.90, 0.30 * incidentSeverity);
+          revenueMultiplier = 1 - revenueLoss;
+          incidents.push(`${definition.name}: problemas operacionais reduziram a receita em ${Math.round(revenueLoss * 100)}%.`);
+        } else if (incidentType === 4) {
+          const revenueLoss = Math.min(0.95, 0.45 * incidentSeverity);
+          revenueMultiplier = 1 - revenueLoss;
+          incidents.push(`${definition.name}: uma greve paralisou parte da operação e reduziu a receita em ${Math.round(revenueLoss * 100)}%.`);
+        } else if (incidentType === 5) {
+          incidentCost = Math.floor(maintenance * 1.5 * incidentSeverity * (1 - artifactEffects.negativeEventCostReduction));
+          incidents.push(`${definition.name}: fornecedores reajustaram os preços e geraram R$ ${incidentCost} em custos extras.`);
+        } else if (incidentType === 6) {
+          incidentCost = Math.floor(Math.min(companyGrossRevenue * 0.25, maintenance * 6) * incidentSeverity * (1 - artifactEffects.negativeEventCostReduction));
+          incidents.push(`${definition.name}: uma fraude interna causou prejuízo de R$ ${incidentCost}.`);
+        } else {
+          const revenueLoss = Math.min(0.95, 0.50 * incidentSeverity);
+          revenueMultiplier = 1 - revenueLoss;
+          incidents.push(`${definition.name}: uma crise de reputação afastou clientes e reduziu a receita em ${Math.round(revenueLoss * 100)}%.`);
+        }
+        }
+      }
+
+      companyGrossRevenue = Math.floor(companyGrossRevenue * revenueMultiplier);
+      grossRevenue += companyGrossRevenue;
+      operatingCompanies += 1;
+    }
+
+    operatingCosts += maintenance + payroll + incidentCost;
+    if (employeesLeaving > 0) company.employees = Math.max(0, company.employees - employeesLeaving);
+  }
+
+  const netIncome = grossRevenue - operatingCosts;
+  stats.saldo += netIncome;
+
+  if (stats.companies.length > 0) {
+    const inactive = stats.companies.length - operatingCompanies;
+    const inactiveText = inactive > 0 ? ` ${inactive} empresa(s) ficaram sem receita por falta de funcionários.` : '';
+    addEvent(
+      events,
+      `🏢 Empresas: receita R$ ${grossRevenue}, custos R$ ${operatingCosts}, resultado ${netIncome >= 0 ? '+' : '-'}R$ ${Math.abs(netIncome)}.${inactiveText}`,
+      netIncome >= 0 ? 'positive' : 'negative',
+    );
+  }
+
+  for (const incident of incidents) addEvent(events, `⚠️ ${incident}`, 'negative');
+
+  return { grossRevenue, operatingCosts, netIncome, operatingCompanies, incidents };
+}
+
 // ============================================================
 // JOB OFFER GENERATION
 // ============================================================
@@ -260,6 +431,7 @@ export function applyPassMonth(stats: GameStats, events: GameEvent[]): {
   const season = getSeason(stats.mes);
   const interestRate = getInterestRate(stats);
   const isDoente = !!stats.doencaAtiva;
+  const artifactEffects = getArtifactEffects(stats);
 
   // ── Event selection ──────────────────────────────────────
   const { good, bad, neutral } = buildMonthlyEvents(stats);
@@ -272,10 +444,15 @@ export function applyPassMonth(stats: GameStats, events: GameEvent[]): {
   else                                  selectedEvent = pick(neutral);
 
   let eventBillsMult = selectedEvent.billsMult ?? 1.0;
+  if (selectedEvent.type === 'negative' && eventBillsMult > 1) {
+    eventBillsMult = 1 + (eventBillsMult - 1) * (1 - artifactEffects.negativeEventCostReduction);
+  }
   let bonusSaldo = 0;
   if (selectedEvent.saldoMult) {
     bonusSaldo = Math.floor(stats.salario * selectedEvent.saldoMult);
+    if (bonusSaldo < 0) bonusSaldo = Math.ceil(bonusSaldo * (1 - artifactEffects.negativeEventCostReduction));
   }
+  flags.monthlyEventBalanceChange = bonusSaldo;
 
   // ── Salary calculation ───────────────────────────────────
   let salaryPenalty = 1;
@@ -287,16 +464,24 @@ export function applyPassMonth(stats: GameStats, events: GameEvent[]): {
   if (stats.unlockedMechanics.produtividade) {
     actualSalary = Math.floor(actualSalary * PRODUTIVIDADE_SALARY_MOD[stats.produtividade]);
   }
+  actualSalary = Math.floor(actualSalary * getRetirementSalaryMultiplier(stats));
+  actualSalary = Math.floor(actualSalary * (1 + artifactEffects.salaryBonus));
 
   // ── Monthly bills ────────────────────────────────────────
   const costOfLivingMultiplier = interestRate >= 59 ? 1.20 : 1;
-  const monthlyBillsAdded = Math.floor(stats.contas * costOfLivingMultiplier * eventBillsMult);
-  const rendimento = stats.poupanca * (SAVINGS_YIELD + stats.roomUpgrades.sala * 0.001);
-  stats.poupanca += rendimento;
+  const monthlyBillsAdded = Math.floor(stats.contas * costOfLivingMultiplier * eventBillsMult * (1 - artifactEffects.billsDiscount) * (1 - artifactEffects.allPricesDiscount));
+  const rendimento = stats.poupanca * (SAVINGS_YIELD + stats.roomUpgrades.sala * 0.001 + artifactEffects.savingsYieldBonus);
+  stats.poupanca = Math.min(MAX_SAVINGS, stats.poupanca + rendimento);
 
   // ── Unlock mechanics ─────────────────────────────────────
   stats.mes += 1;
   stats.saldo += actualSalary + bonusSaldo;
+  const companyResult = processCompanies(stats, events);
+  flags.companyGrossRevenue = companyResult.grossRevenue;
+  flags.companyOperatingCosts = companyResult.operatingCosts;
+  flags.companyNetIncome = companyResult.netIncome;
+  flags.operatingCompanies = companyResult.operatingCompanies;
+  flags.companyIncidents = companyResult.incidents;
   stats.contasEmAtraso += monthlyBillsAdded;
   if (stats.contasEmAtraso > 0) stats.mesesEmAtraso += 1;
   else stats.mesesEmAtraso = 0;
@@ -345,7 +530,7 @@ export function applyPassMonth(stats: GameStats, events: GameEvent[]): {
     let delta = -1;
     if (season === 'Inverno') delta -= 2;
     if (isDoente) delta -= 5;
-    const reduction = stats.cursoBenefits.healthDecayReduction;
+    const reduction = Math.min(0.85, stats.cursoBenefits.healthDecayReduction);
     if (reduction > 0) delta = Math.round(delta * (1 - reduction));
     stats.saudeValue = clamp(stats.saudeValue + delta, 0, 100);
 
@@ -403,6 +588,7 @@ export function applyPassMonth(stats: GameStats, events: GameEvent[]): {
     if (stats.saldo < 0)                         deltaPerf -= 5;
     const p = stats.workPerformance;
     if (p > 50) deltaPerf -= 1; else if (p < 50) deltaPerf += 1;
+    deltaPerf += artifactEffects.productivityBonus;
     stats.workPerformance = clamp(stats.workPerformance + deltaPerf, 0, 100);
     stats.produtividade = getProdutividadeFromPerformance(stats.workPerformance);
   }
@@ -412,7 +598,7 @@ export function applyPassMonth(stats: GameStats, events: GameEvent[]): {
   updateAssetPrices(stats.cryptos);
 
   // ── Job offers ───────────────────────────────────────────
-  const chanceVaga = 0.04 + stats.nivelCurriculo * 0.02 + stats.cursoBenefits.jobChanceBonus;
+  const chanceVaga = 0.04 + stats.nivelCurriculo * 0.02 + stats.cursoBenefits.jobChanceBonus + artifactEffects.jobChanceBonus;
   if (rand() < chanceVaga) {
     const offer = generateJobOffer(stats);
     const email = {
@@ -466,7 +652,7 @@ export function applyAction(
     case 'BUY_FOOD': {
       const { qty } = action;
       if (!Number.isInteger(qty) || qty < 1 || qty > 200) return fail('Quantidade inválida.');
-      const total = getCurrentFoodPrice(stats) * qty;
+      const total = getDiscountedPurchasePrice(stats, getCurrentFoodPrice(stats) * qty);
       if (stats.saldo < total) return fail(`Saldo insuficiente. Necessário R$ ${Math.floor(total)}.`);
       stats.saldo -= total;
       stats.comida += qty;
@@ -480,7 +666,7 @@ export function applyAction(
     case 'BUY_WOOD': {
       const { qty } = action;
       if (!Number.isInteger(qty) || qty < 1 || qty > 200) return fail('Quantidade inválida.');
-      const total = WOOD_PRICE * qty;
+      const total = getDiscountedPurchasePrice(stats, WOOD_PRICE * qty);
       if (stats.saldo < total) return fail(`Saldo insuficiente. Necessário R$ ${Math.floor(total)}.`);
       stats.saldo -= total;
       stats.lenha += qty;
@@ -507,10 +693,11 @@ export function applyAction(
       const interestRate = getInterestRate(stats);
       if (interestRate >= 59) return fail('Estudos bloqueados por dívidas.');
       const season = getSeason(stats.mes);
-      const custo = season === 'Primavera' ? Math.floor(nextDegree.custoMensal * 0.7) : nextDegree.custoMensal;
+      const custo = getDiscountedPurchasePrice(stats, season === 'Primavera' ? Math.floor(nextDegree.custoMensal * 0.7) : nextDegree.custoMensal);
       if (stats.saldo < custo) return fail(`Saldo insuficiente. Necessário R$ ${custo}.`);
       stats.saldo -= custo;
-      stats.experienciaCurriculo += 1;
+      const degreeProgress = rand() < getArtifactEffects(stats).studyDoubleProgressChance ? 2 : 1;
+      stats.experienciaCurriculo += degreeProgress;
       if (stats.experienciaCurriculo >= nextDegree.mesesNecessarios) {
         stats.nivelCurriculo += 1;
         stats.experienciaCurriculo = 0;
@@ -530,9 +717,11 @@ export function applyAction(
       if (!curso) return fail('Curso inválido.');
       const interestRate = getInterestRate(stats);
       if (interestRate >= 59) return fail('Estudos bloqueados por dívidas.');
-      if (stats.saldo < curso.mensalidade) return fail(`Saldo insuficiente. Necessário R$ ${curso.mensalidade}.`);
-      stats.saldo -= curso.mensalidade;
-      stats.cursoAtivo.progress += 1;
+      const courseCost = getDiscountedPurchasePrice(stats, curso.mensalidade);
+      if (stats.saldo < courseCost) return fail(`Saldo insuficiente. Necessário R$ ${courseCost}.`);
+      stats.saldo -= courseCost;
+      const courseProgress = rand() < getArtifactEffects(stats).studyDoubleProgressChance ? 2 : 1;
+      stats.cursoAtivo.progress += courseProgress;
       if (stats.cursoAtivo.progress >= curso.duracaoEstudos) {
         // Aplicar benefícios
         if (curso.id === 'nutricao')      { stats.cursoBenefits.foodDiscount = 0.1; stats.cursoBenefits.healthDecayReduction = 0.3; }
@@ -582,8 +771,9 @@ export function applyAction(
       const acao = ACOES_SAUDE.find(a => a.id === action.actionId);
       if (!acao) return fail('Ação de saúde inválida.');
       if (!stats.unlockedMechanics.saude) return fail('Sistema de saúde ainda não desbloqueado.');
-      if (stats.saldo < acao.custo) return fail(`Saldo insuficiente. Necessário R$ ${acao.custo}.`);
-      stats.saldo -= acao.custo;
+      const healthCost = getLifestylePrice(stats, acao.custo);
+      if (stats.saldo < healthCost) return fail(`Saldo insuficiente. Necessário R$ ${healthCost}.`);
+      stats.saldo -= healthCost;
       stats.saudeValue = clamp(stats.saudeValue + acao.ganho, 0, 100);
       addEvent(events, `${acao.emoji} ${acao.nome}: +${acao.ganho} saúde.`, 'positive');
       return ok(stats, events);
@@ -592,7 +782,7 @@ export function applyAction(
     // ── PAY_DISEASE ───────────────────────────────────────
     case 'PAY_DISEASE': {
       if (!stats.doencaAtiva) return fail('Nenhuma doença ativa.');
-      const custo = stats.doencaAtiva.custo;
+      const custo = getLifestylePrice(stats, stats.doencaAtiva.custo);
       if (stats.saldo < custo) return fail(`Saldo insuficiente. Tratamento custa R$ ${Math.floor(custo)}.`);
       stats.saldo -= custo;
       addEvent(events, `💊 Tratamento pago: R$ ${Math.floor(custo)}. Você está curado de ${stats.doencaAtiva.nome}!`, 'positive');
@@ -605,8 +795,9 @@ export function applyAction(
       const ativ = LAZER_ATIVIDADES.find(a => a.id === action.activityId);
       if (!ativ) return fail('Atividade de lazer inválida.');
       if (!stats.unlockedMechanics.felicidade) return fail('Sistema de felicidade ainda não desbloqueado.');
-      if (stats.saldo < ativ.custoBase) return fail(`Saldo insuficiente. Necessário R$ ${ativ.custoBase}.`);
-      stats.saldo -= ativ.custoBase;
+      const leisureCost = getLifestylePrice(stats, ativ.custoBase);
+      if (stats.saldo < leisureCost) return fail(`Saldo insuficiente. Necessário R$ ${leisureCost}.`);
+      stats.saldo -= leisureCost;
       const ganho = getHappinessGainScaled(ativ.happinessGain, stats.salario);
       stats.morale = clamp(stats.morale + ganho, 0, 100);
       stats.humor  = getHumorFromMorale(stats.morale);
@@ -641,6 +832,7 @@ export function applyAction(
       if (!stats.cursosCompletos.includes('financas')) return fail('Conclua o curso de Finanças para investir.');
       if (getInterestRate(stats) >= 45) return fail('Operações de investimento bloqueadas por dívidas.');
       if (stats.saldo < amount) return fail('Saldo insuficiente.');
+      if (stats.poupanca + amount > MAX_SAVINGS) return fail('A poupança aceita no máximo R$ 1.000.000.000.');
       stats.saldo    -= amount;
       stats.poupanca += amount;
       addEvent(events, `🏦 Depositou R$ ${amount} na poupança.`, 'positive');
@@ -706,6 +898,191 @@ export function applyAction(
     }
 
     // ── EQUIP_TITLE ───────────────────────────────────────
+    case 'BUY_COMPANY': {
+      if (stats.retirementCount < 1) return fail('Empresas são desbloqueadas após a primeira aposentadoria.');
+      const definition = COMPANY_DEFINITIONS.find(company => company.id === action.companyId);
+      if (!definition) return fail('Empresa não encontrada.');
+      if (stats.companies.some(company => company.id === definition.id)) return fail('Você já possui essa empresa.');
+      const purchaseCost = getDiscountedPurchasePrice(stats, definition.purchaseCost);
+      if (stats.saldo < purchaseCost) {
+        return fail(`Saldo insuficiente. Necessário R$ ${purchaseCost}.`);
+      }
+
+      stats.saldo -= purchaseCost;
+      stats.companies.push({ id: definition.id, level: 1, employees: 0, strategy: 'balanced' });
+      addEvent(events, `🏢 Comprou ${definition.name} por R$ ${purchaseCost}. Contrate a equipe para iniciar a operação.`, 'career');
+      checkTitles(stats, events);
+      return ok(stats, events);
+    }
+
+    case 'UPGRADE_COMPANY': {
+      const definition = COMPANY_DEFINITIONS.find(company => company.id === action.companyId);
+      const owned = stats.companies.find(company => company.id === action.companyId);
+      if (!definition || !owned) return fail('Empresa não encontrada.');
+      let upgradeCost = getCompanyUpgradeCost(definition, owned.level);
+      if (upgradeCost !== null) upgradeCost = getDiscountedPurchasePrice(stats, upgradeCost * (1 - getArtifactEffects(stats).companyUpgradeDiscount));
+      if (upgradeCost === null) return fail('Esta empresa já está no nível máximo.');
+      if (stats.saldo < upgradeCost) return fail(`Saldo insuficiente. Necessário R$ ${upgradeCost}.`);
+
+      stats.saldo -= upgradeCost;
+      owned.level += 1;
+      const requiredEmployees = getCompanyRequiredEmployees(definition, owned.level);
+      addEvent(events, `🏗️ ${definition.name} melhorada para o nível ${owned.level}. Nova equipe mínima: ${requiredEmployees}.`, 'career');
+      return ok(stats, events);
+    }
+
+    case 'SET_COMPANY_STRATEGY': {
+      const owned = stats.companies.find(company => company.id === action.companyId);
+      const definition = COMPANY_DEFINITIONS.find(company => company.id === action.companyId);
+      if (!definition || !owned) return fail('Empresa não encontrada.');
+      if (!['safe', 'balanced', 'aggressive'].includes(action.strategy)) return fail('Modo de gestão inválido.');
+      owned.strategy = action.strategy;
+      const strategy = getCompanyStrategy(action.strategy);
+      addEvent(events, `${strategy.emoji} ${definition.name} mudou para o modo ${strategy.name}.`, 'neutral');
+      return ok(stats, events);
+    }
+
+    case 'HIRE_EMPLOYEES': {
+      const definition = COMPANY_DEFINITIONS.find(company => company.id === action.companyId);
+      const owned = stats.companies.find(company => company.id === action.companyId);
+      if (!definition || !owned) return fail('Empresa não encontrada.');
+      const qty = Math.floor(action.qty);
+      const requiredEmployees = getCompanyRequiredEmployees(definition, owned.level);
+      const missingEmployees = Math.max(0, requiredEmployees - owned.employees);
+      if (!Number.isInteger(qty) || qty < 1 || qty > missingEmployees) return fail('Quantidade de funcionários inválida.');
+      const totalCost = getDiscountedPurchasePrice(stats, getEmployeeHiringCost(definition) * qty * (1 - getArtifactEffects(stats).hiringCostDiscount));
+      if (stats.saldo < totalCost) return fail(`Saldo insuficiente. Necessário R$ ${totalCost}.`);
+
+      stats.saldo -= totalCost;
+      owned.employees += qty;
+      addEvent(events, `👥 ${definition.name} contratou ${qty} funcionário(s) por R$ ${totalCost}.`, 'positive');
+      return ok(stats, events);
+    }
+
+    case 'FIRE_EMPLOYEES': {
+      const definition = COMPANY_DEFINITIONS.find(company => company.id === action.companyId);
+      const owned = stats.companies.find(company => company.id === action.companyId);
+      if (!definition || !owned) return fail('Empresa não encontrada.');
+      const qty = Math.floor(action.qty);
+      if (!Number.isInteger(qty) || qty < 1 || qty > owned.employees) return fail('Quantidade de funcionários inválida.');
+
+      owned.employees -= qty;
+      addEvent(events, `👋 ${definition.name} demitiu ${qty} funcionário(s).`, 'neutral');
+      return ok(stats, events);
+    }
+
+    case 'RETIRE': {
+      if (stats.retirementCount >= 10) return fail('Você já atingiu o limite de 10 aposentadorias.');
+      const requirement = getRetirementRequirement(stats.retirementCount);
+      if (stats.saldo < requirement) {
+        return fail(`Saldo insuficiente para se aposentar. Necessário R$ ${requirement}.`);
+      }
+
+      const retiredStats = createInitialStats(stats.playerNick);
+      retiredStats.retirementCount = stats.retirementCount + 1;
+      retiredStats.devModeUsed = stats.devModeUsed;
+      retiredStats.unlockedTitles = Array.from(new Set([...stats.unlockedTitles, 'Aposentado']))
+        .filter(title => title !== 'GlobalPlayer');
+      retiredStats.equippedTitle = retiredStats.unlockedTitles.includes(stats.equippedTitle) ? stats.equippedTitle : '';
+      retiredStats.artifactLevels = { ...(stats.artifactLevels ?? {}) };
+      retiredStats.equippedArtifacts = [...(stats.equippedArtifacts ?? [])];
+      retiredStats.artifactBoxes = {
+        basic: (stats.artifactBoxes?.basic ?? 0) + 1,
+        premium: stats.artifactBoxes?.premium ?? 0,
+        elite: stats.artifactBoxes?.elite ?? 0,
+      };
+      retiredStats.artifactBoxesOpened = stats.artifactBoxesOpened ?? 0;
+
+      const retiredEvents: GameEvent[] = [];
+      addEvent(
+        retiredEvents,
+        `🏖️ Aposentadoria ${retiredStats.retirementCount} concluída! Bônus permanentes: +${retiredStats.retirementCount * 10}% no salário, +${retiredStats.retirementCount * 5}% nas empresas e 1 Caixa de Artefato.`,
+        'career',
+      );
+      checkTitles(retiredStats, retiredEvents);
+      return ok(retiredStats, retiredEvents);
+    }
+
+    case 'BUY_ARTIFACT_BOX': {
+      if (stats.retirementCount < 1) return fail('Artefatos são desbloqueados após a primeira aposentadoria.');
+      const box = ARTIFACT_BOX_DEFINITIONS.find(item => item.id === action.boxType);
+      if (!box) return fail('Caixa de artefato inválida.');
+      const price = getDiscountedPurchasePrice(stats, getArtifactBoxPrice(box.id, stats.retirementCount));
+      if (stats.saldo < price) return fail(`Saldo insuficiente. A caixa custa R$ ${price}.`);
+      stats.saldo -= price;
+      stats.artifactBoxes[box.id] += 1;
+      addEvent(events, `${box.emoji} Comprou uma ${box.name} por R$ ${price}.`, 'career');
+      return ok(stats, events);
+    }
+
+    case 'BUY_AND_OPEN_ARTIFACT_BOX': {
+      if (stats.retirementCount < 1) return fail('Artefatos são desbloqueados após a primeira aposentadoria.');
+      const box = ARTIFACT_BOX_DEFINITIONS.find(item => item.id === action.boxType);
+      if (!box) return fail('Caixa de artefato inválida.');
+      const candidates = ARTIFACT_DEFINITIONS.filter(artifact => box.artifactIds.includes(artifact.id) && (stats.artifactLevels[artifact.id] ?? 0) < (artifact.rarity === 'Divinity' ? 1 : MAX_ARTIFACT_LEVEL));
+      if (candidates.length === 0) return fail(`Todos os artefatos da ${box.name} já estão no nível máximo.`);
+
+      const usedStoredBox = stats.artifactBoxes[box.id] > 0;
+      const price = getDiscountedPurchasePrice(stats, getArtifactBoxPrice(box.id, stats.retirementCount));
+      if (!usedStoredBox && stats.saldo < price) return fail(`Saldo insuficiente. A caixa custa R$ ${price}.`);
+      if (usedStoredBox) stats.artifactBoxes[box.id] -= 1;
+      else stats.saldo -= price;
+
+      const artifact = pickArtifact(box.id, rand(), candidates);
+      const previousLevel = stats.artifactLevels[artifact.id] ?? 0;
+      stats.artifactLevels[artifact.id] = Math.min(artifact.rarity === 'Divinity' ? 1 : MAX_ARTIFACT_LEVEL, previousLevel + 1);
+      stats.artifactBoxesOpened = (stats.artifactBoxesOpened ?? 0) + 1;
+      const acquisition = usedStoredBox ? `${box.name} guardada` : `${box.name} comprada por R$ ${price}`;
+      addEvent(
+        events,
+        previousLevel === 0
+          ? `${box.emoji} ${acquisition} e aberta: você encontrou ${artifact.emoji} ${artifact.name} (${artifact.rarity})!`
+          : `${box.emoji} ${acquisition} e aberta: ${artifact.emoji} ${artifact.name} evoluiu para o nível ${previousLevel + 1}!`,
+        'career',
+      );
+      checkTitles(stats, events);
+      return { ok: true, stats, events, flags: { artifactAwardedId: artifact.id, artifactWasUpgrade: artifact.rarity !== 'Divinity' && previousLevel > 0 } };
+    }
+
+    case 'OPEN_ARTIFACT_BOX': {
+      if (stats.retirementCount < 1) return fail('Artefatos são desbloqueados após a primeira aposentadoria.');
+      const box = ARTIFACT_BOX_DEFINITIONS.find(item => item.id === action.boxType);
+      if (!box) return fail('Caixa de artefato inválida.');
+      if (stats.artifactBoxes[box.id] < 1) return fail(`Você não possui nenhuma ${box.name}.`);
+      const candidates = ARTIFACT_DEFINITIONS.filter(artifact => box.artifactIds.includes(artifact.id) && (stats.artifactLevels[artifact.id] ?? 0) < (artifact.rarity === 'Divinity' ? 1 : MAX_ARTIFACT_LEVEL));
+      if (candidates.length === 0) return fail(`Todos os artefatos da ${box.name} já estão no nível máximo.`);
+
+      const artifact = pickArtifact(box.id, rand(), candidates);
+      const previousLevel = stats.artifactLevels[artifact.id] ?? 0;
+      stats.artifactBoxes[box.id] -= 1;
+      stats.artifactLevels[artifact.id] = Math.min(artifact.rarity === 'Divinity' ? 1 : MAX_ARTIFACT_LEVEL, previousLevel + 1);
+      stats.artifactBoxesOpened = (stats.artifactBoxesOpened ?? 0) + 1;
+      addEvent(
+        events,
+        previousLevel === 0
+          ? `✨ Caixa aberta: você encontrou ${artifact.emoji} ${artifact.name} (${artifact.rarity})!`
+          : `⬆️ ${artifact.emoji} ${artifact.name} evoluiu para o nível ${previousLevel + 1}!`,
+        'career',
+      );
+      checkTitles(stats, events);
+      return { ok: true, stats, events, flags: { artifactAwardedId: artifact.id, artifactWasUpgrade: artifact.rarity !== 'Divinity' && previousLevel > 0 } };
+    }
+
+    case 'TOGGLE_ARTIFACT': {
+      if (stats.retirementCount < 1) return fail('Artefatos são desbloqueados após a primeira aposentadoria.');
+      const artifact = ARTIFACT_DEFINITIONS.find(item => item.id === action.artifactId);
+      if (!artifact || (stats.artifactLevels[artifact.id] ?? 0) < 1) return fail('Artefato não encontrado na coleção.');
+      if (stats.equippedArtifacts.includes(artifact.id)) {
+        stats.equippedArtifacts = stats.equippedArtifacts.filter(artifactId => artifactId !== artifact.id);
+        addEvent(events, `${artifact.emoji} ${artifact.name} foi desequipado.`, 'neutral');
+        return ok(stats, events);
+      }
+      if (stats.equippedArtifacts.length >= MAX_EQUIPPED_ARTIFACTS) return fail(`Você só pode equipar ${MAX_EQUIPPED_ARTIFACTS} artefatos.`);
+      stats.equippedArtifacts.push(artifact.id);
+      addEvent(events, `${artifact.emoji} ${artifact.name} foi equipado.`, 'positive');
+      return ok(stats, events);
+    }
+
     case 'EQUIP_TITLE': {
       const { titleId } = action;
       if (titleId === '') {
@@ -736,7 +1113,7 @@ export function applyAction(
       const devToolsEnabled = process.env.npm_lifecycle_event === 'dev' || process.env.ENABLE_DEV_TOOLS === 'true';
       if (!devToolsEnabled) return fail('Ferramentas de desenvolvimento desativadas.');
 
-      const { saldo, comida, lenha } = action;
+      const { saldo, comida, lenha, mes } = action;
       if (!Number.isFinite(saldo) || saldo < -1_000_000_000 || saldo > 1_000_000_000) {
         return fail('Saldo de desenvolvimento inválido.');
       }
@@ -746,10 +1123,14 @@ export function applyAction(
       if (!Number.isInteger(lenha) || lenha < 0 || lenha > 1_000_000) {
         return fail('Quantidade de lenha inválida.');
       }
+      if (!Number.isInteger(mes) || mes < 1 || mes > 1_000_000) {
+        return fail('Mês de desenvolvimento inválido.');
+      }
 
       stats.saldo = saldo;
       stats.comida = comida;
       stats.lenha = lenha;
+      stats.mes = mes;
       stats.devModeUsed = true;
       stats.unlockedTitles = stats.unlockedTitles.filter(title => title !== 'GlobalPlayer');
       if (stats.equippedTitle === 'GlobalPlayer') stats.equippedTitle = '';

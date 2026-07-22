@@ -32,6 +32,17 @@ export interface Portfolio {
   [symbol: string]: AssetPosition;
 }
 
+export type CompanyStrategy = 'safe' | 'balanced' | 'aggressive';
+export type ArtifactBoxType = 'basic' | 'premium' | 'elite';
+export type ArtifactBoxInventory = Record<ArtifactBoxType, number>;
+
+export interface OwnedCompany {
+  id: string;
+  level: number;
+  employees: number;
+  strategy: CompanyStrategy;
+}
+
 export interface RoomUpgrades {
   sala: number;
   cozinha: number;
@@ -63,6 +74,12 @@ export interface GameStats {
   stocks: Stock[];
   cryptos: Stock[];
   portfolio: Portfolio;
+  companies: OwnedCompany[];
+  retirementCount: number;
+  artifactLevels: Record<string, number>;
+  equippedArtifacts: string[];
+  artifactBoxes: ArtifactBoxInventory;
+  artifactBoxesOpened: number;
   unlockedTitles: string[];
   equippedTitle: string;
   totalFoodBought: number;
@@ -144,10 +161,20 @@ export type GameAction =
   | { type: 'INVEST_WITHDRAW'; amount: number }
   | { type: 'BUY_ASSET'; symbol: string; qty: number; assetType: 'stock' | 'crypto' }
   | { type: 'SELL_ASSET'; symbol: string; qty: number; assetType: 'stock' | 'crypto' }
+  | { type: 'BUY_COMPANY'; companyId: string }
+  | { type: 'UPGRADE_COMPANY'; companyId: string }
+  | { type: 'SET_COMPANY_STRATEGY'; companyId: string; strategy: CompanyStrategy }
+  | { type: 'HIRE_EMPLOYEES'; companyId: string; qty: number }
+  | { type: 'FIRE_EMPLOYEES'; companyId: string; qty: number }
+  | { type: 'RETIRE' }
+  | { type: 'BUY_ARTIFACT_BOX'; boxType: ArtifactBoxType }
+  | { type: 'OPEN_ARTIFACT_BOX'; boxType: ArtifactBoxType }
+  | { type: 'BUY_AND_OPEN_ARTIFACT_BOX'; boxType: ArtifactBoxType }
+  | { type: 'TOGGLE_ARTIFACT'; artifactId: string }
   | { type: 'EQUIP_TITLE'; titleId: string }
   | { type: 'READ_EMAIL'; emailId: string }
   | { type: 'DELETE_EMAIL'; emailId: string }
-  | { type: 'DEV_SET_STATS'; saldo: number; comida: number; lenha: number }
+  | { type: 'DEV_SET_STATS'; saldo: number; comida: number; lenha: number; mes: number }
   | { type: 'RESET_GAME' };
 
 export interface ActionResult {
@@ -162,5 +189,13 @@ export interface ActionResult {
     seasonNotice?: Season;
     gameOver?: boolean;
     deathReason?: string;
+    monthlyEventBalanceChange?: number;
+    companyGrossRevenue?: number;
+    companyOperatingCosts?: number;
+    companyNetIncome?: number;
+    operatingCompanies?: number;
+    companyIncidents?: string[];
+    artifactAwardedId?: string;
+    artifactWasUpgrade?: boolean;
   };
 }

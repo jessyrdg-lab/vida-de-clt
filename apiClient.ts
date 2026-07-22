@@ -1,4 +1,4 @@
-import { GameStats, GameEvent } from './types';
+import { GameStats, GameEvent, CompanyStrategy, ArtifactBoxType } from './types';
 
 // ─────────────────────────────────────────────────────────────
 // Configuração
@@ -24,9 +24,20 @@ export type GameAction =
   | { type: 'INVEST_WITHDRAW'; amount: number }
   | { type: 'BUY_ASSET'; symbol: string; qty: number; assetType: 'stock' | 'crypto' }
   | { type: 'SELL_ASSET'; symbol: string; qty: number; assetType: 'stock' | 'crypto' }
+  | { type: 'BUY_COMPANY'; companyId: string }
+  | { type: 'UPGRADE_COMPANY'; companyId: string }
+  | { type: 'SET_COMPANY_STRATEGY'; companyId: string; strategy: CompanyStrategy }
+  | { type: 'HIRE_EMPLOYEES'; companyId: string; qty: number }
+  | { type: 'FIRE_EMPLOYEES'; companyId: string; qty: number }
+  | { type: 'RETIRE' }
+  | { type: 'BUY_ARTIFACT_BOX'; boxType: ArtifactBoxType }
+  | { type: 'OPEN_ARTIFACT_BOX'; boxType: ArtifactBoxType }
+  | { type: 'BUY_AND_OPEN_ARTIFACT_BOX'; boxType: ArtifactBoxType }
+  | { type: 'TOGGLE_ARTIFACT'; artifactId: string }
   | { type: 'EQUIP_TITLE'; titleId: string }
   | { type: 'READ_EMAIL'; emailId: string }
   | { type: 'DELETE_EMAIL'; emailId: string }
+  | { type: 'DEV_SET_STATS'; saldo: number; comida: number; lenha: number; mes: number }
   | { type: 'RESET_GAME' };
 
 export interface DispatchResult {
@@ -40,6 +51,14 @@ export interface DispatchResult {
     seasonNotice?: 'Primavera' | 'Verão' | 'Outono' | 'Inverno';
     gameOver?: boolean;
     deathReason?: string;
+    monthlyEventBalanceChange?: number;
+    companyGrossRevenue?: number;
+    companyOperatingCosts?: number;
+    companyNetIncome?: number;
+    operatingCompanies?: number;
+    companyIncidents?: string[];
+    artifactAwardedId?: string;
+    artifactWasUpgrade?: boolean;
   };
 }
 

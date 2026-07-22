@@ -50,6 +50,17 @@ export interface Portfolio {
   [symbol: string]: AssetPosition;
 }
 
+export type CompanyStrategy = 'safe' | 'balanced' | 'aggressive';
+export type ArtifactBoxType = 'basic' | 'premium' | 'elite';
+export type ArtifactBoxInventory = Record<ArtifactBoxType, number>;
+
+export interface OwnedCompany {
+  id: string;
+  level: number;
+  employees: number;
+  strategy: CompanyStrategy;
+}
+
 export interface InterviewQuestion {
   question: string;
   options: string[];
@@ -95,6 +106,12 @@ export interface GameStats {
   stocks: Stock[]; // Lista de ações disponíveis
   cryptos: Stock[]; // Lista de criptos disponíveis
   portfolio: Portfolio; // Ativos (ações e criptos) que o jogador possui
+  companies: OwnedCompany[];
+  retirementCount: number;
+  artifactLevels: Record<string, number>;
+  equippedArtifacts: string[];
+  artifactBoxes: ArtifactBoxInventory;
+  artifactBoxesOpened: number;
   // Títulos e Conquistas
   unlockedTitles: string[];
   equippedTitle: string;
