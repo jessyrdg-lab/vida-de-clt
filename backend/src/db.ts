@@ -10,7 +10,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATABASE_URL = process.env.DATABASE_URL?.trim();
 const usesPostgres = Boolean(DATABASE_URL);
 const MAX_STORED_EVENTS = 200;
-export const MIN_LEADERBOARD_BALANCE = 1_000_000;
 
 type PostgresPool = {
   query: (sql: string, values?: unknown[]) => Promise<{ rows: any[] }>;
@@ -298,7 +297,6 @@ export async function getLeaderboard(limit = 10): Promise<LeaderboardEntry[]> {
       WHERE COALESCE((stats->>'devModeUsed')::boolean, false) = false
         AND stats ? 'playerNick'
         AND stats ? 'saldo'
-        AND (stats->>'saldo')::double precision >= $2
         AND NOT EXISTS (
           SELECT 1
           FROM jsonb_array_elements(events) AS event_item(item)
@@ -309,7 +307,7 @@ export async function getLeaderboard(limit = 10): Promise<LeaderboardEntry[]> {
         COALESCE((stats->>'mes')::integer, 0) DESC,
         stats->>'playerNick' ASC
       LIMIT $1
-    `, [safeLimit, MIN_LEADERBOARD_BALANCE])).rows;
+    `, [safeLimit])).rows;
 
     return rows.map(row => ({
       token: String(row.token),
@@ -331,7 +329,6 @@ export async function getLeaderboard(limit = 10): Promise<LeaderboardEntry[]> {
       );
       if (usedDevTools) continue;
       if (typeof stats.playerNick !== 'string' || !Number.isFinite(stats.saldo)) continue;
-      if (stats.saldo < MIN_LEADERBOARD_BALANCE) continue;
 
       entries.push({
         token: row.token,
